@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/centrifugal/centrifuge v0.36.0
-	github.com/centrifugal/protocol v0.16.0
+	github.com/centrifugal/protocol v0.19.2
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.59.1
@@ -48,7 +48,7 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/redis/rueidis v1.0.57 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
-	github.com/segmentio/encoding v0.4.1 // indirect
+	github.com/segmentio/encoding v0.5.3 // indirect
 	github.com/shadowspore/fossil-delta v0.0.0-20241213113458-1d797d70cbe3 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
