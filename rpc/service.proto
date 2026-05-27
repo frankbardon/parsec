@@ -1,0 +1,222 @@
+syntax = "proto3";
+
+package parsec;
+option go_package = "github.com/frankbardon/parsec/rpc;rpc";
+
+// ParsecService is the management RPC surface. It mirrors the CLI command
+// set: anything you can do over twirp is a CLI subcommand, and vice versa.
+//
+// Channel names are passed as strings — the validator in package channels
+// is the single source of truth; clients don't need a typed parsing step.
+// Publications carry raw bytes so consumers retain protocol flexibility.
+service ParsecService {
+  // Read-only manifest. Public (no bearer required).
+  rpc Manifest(Empty) returns (JSONResponse);
+
+  // Channel CRUD and lifecycle.
+  rpc OpenPublic(OpenPublicRequest) returns (ChannelResponse);
+  rpc CreatePrivate(CreatePrivateRequest) returns (Credentials);
+  rpc ListChannels(Empty) returns (ListChannelsResponse);
+  rpc GetChannel(ChannelRef) returns (ChannelResponse);
+  rpc DeleteChannel(ChannelRef) returns (Empty);
+
+  // Publish + presence.
+  rpc Publish(PublishRequest) returns (PublishResponse);
+  rpc Presence(ChannelRef) returns (PresenceResponse);
+
+  // Token operations. RefreshToken is public — the refresh token itself
+  // is the credential. IssueMgmt mints a new mgmt bearer signed by the
+  // currently active key (used during key rotation).
+  rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
+  rpc IssueMgmt(IssueMgmtRequest) returns (IssueMgmtResponse);
+
+  // Key ring management.
+  rpc ListKeys(Empty) returns (ListKeysResponse);
+  rpc GenerateKey(Empty) returns (KeySummary);
+  rpc PromoteKey(KeyRef) returns (Empty);
+  rpc RetireKey(KeyRef) returns (Empty);
+  rpc ReloadKeys(Empty) returns (Empty);
+
+  // Dead-letter queue inspection + maintenance.
+  rpc DlqList(DlqListRequest) returns (DlqListResponse);
+  rpc DlqCount(DlqCountRequest) returns (DlqCountResponse);
+  rpc DlqDiscard(DlqDiscardRequest) returns (Empty);
+  rpc DlqReplay(DlqReplayRequest) returns (Empty);
+}
+
+message Empty {}
+
+// JSONResponse carries a descriptor.Envelope as raw JSON in `payload`. Used
+// for Manifest (and any future RPC whose response shape is intentionally
+// schemaless).
+message JSONResponse {
+  bytes payload = 1;
+}
+
+message OpenPublicRequest {
+  string name = 1;
+  int64 ttl_seconds = 2;
+}
+
+message CreatePrivateRequest {
+  string name = 1;
+  int64 ttl_seconds = 2;
+  // Subject (sub claim) baked into the issued access + refresh tokens.
+  // Empty means anonymous.
+  string subject = 3;
+  // Scopes is the optional pattern-grant set baked into both tokens.
+  // Each scope binds a channel-name pattern (e.g. private:webapp.user.42.*)
+  // to a list of verbs (subscribe, publish, manage). Empty produces a
+  // token whose only authorization is the chs exact-match on `name`.
+  // Patterns are validated against the channel grammar at issue time;
+  // cross-visibility patterns (*:foo.bar) are rejected with
+  // PARSEC_INVALID_ARGUMENT.
+  repeated Scope scopes = 4;
+}
+
+// Scope is one entry in CreatePrivateRequest.scopes.
+message Scope {
+  // Pattern is the channel-name pattern, e.g. `private:webapp.user.42.*`.
+  // Single-star matches one segment, double-star matches one-or-more
+  // trailing segments (last position only).
+  string pattern = 1;
+  // Verbs is the set of granted actions. Allowed values:
+  // "subscribe", "publish", "manage".
+  repeated string verbs = 2;
+  // Deny inverts the scope: when true, a matching (channel, verb) pair is
+  // subtracted from the grant set with "deny wins" precedence. A scope
+  // with deny=true on a pattern that overlaps an allow scope still wins
+  // — denies are not unlocked by any allow. A deny scope without an
+  // overlapping allow is a defensive no-op. The default (false) means a
+  // plain allow scope.
+  bool deny = 3;
+}
+
+message ChannelRef {
+  string name = 1;
+}
+
+message ChannelSummary {
+  string name = 1;
+  string state = 2;       // open | closed | deleted
+  int64 ttl_seconds = 3;
+  string created_at = 4;  // RFC3339
+  string last_active = 5; // RFC3339
+}
+
+message ChannelResponse {
+  ChannelSummary channel = 1;
+}
+
+message ListChannelsResponse {
+  repeated ChannelSummary channels = 1;
+}
+
+// Credentials is the one-shot private-channel token pair, returned by
+// CreatePrivate. The access + refresh tokens are returned exactly once.
+message Credentials {
+  string name = 1;
+  string access_token = 2;
+  string refresh_token = 3;
+  int64 access_expires_unix = 4;
+  int64 refresh_expires_unix = 5;
+}
+
+message PublishRequest {
+  string name = 1;
+  bytes data = 2;
+}
+
+message PublishResponse {
+  uint64 offset = 1;
+  string epoch = 2;
+}
+
+message PresenceResponse {
+  int32 subscribers = 1;
+}
+
+// RefreshTokenRequest exchanges a refresh token for an access token.
+message RefreshTokenRequest {
+  string refresh_token = 1;
+}
+
+// RefreshTokenResponse carries the new access token + its expiry.
+message RefreshTokenResponse {
+  string access_token = 1;
+  int64 access_expires_unix = 2;
+}
+
+// IssueMgmtRequest mints a new mgmt bearer signed by the currently active
+// key. Used during key rotation so operators don't get locked out when
+// they retire the key that signed their current bearer.
+message IssueMgmtRequest {
+  string subject = 1;
+  int64 ttl_seconds = 2;
+}
+
+// IssueMgmtResponse carries the fresh mgmt token and its expiry.
+message IssueMgmtResponse {
+  string mgmt_token = 1;
+  int64 expires_unix = 2;
+  string signed_by_key_id = 3;
+}
+
+// KeySummary is the wire shape of one ring key.
+message KeySummary {
+  string id = 1;
+  string role = 2;       // active | verify-only | retired
+  string created_at = 3; // RFC3339
+  string retired_at = 4; // RFC3339, empty when not retired
+}
+
+// ListKeysResponse is the bulk listing for the ring.
+message ListKeysResponse {
+  string active_key_id = 1;
+  repeated KeySummary keys = 2;
+}
+
+// KeyRef identifies one key by id.
+message KeyRef {
+  string id = 1;
+}
+
+// DlqItem is the wire shape of a dead-letter queue entry. Recipient is
+// transported as a JSON blob because each sink defines its own concrete
+// type; consumers that need the typed Recipient can parse it sink-side.
+message DlqItem {
+  string id = 1;
+  string sink = 2;
+  string at = 3;           // RFC3339Nano
+  bytes recipient = 4;     // JSON
+  string subject = 5;
+  string body = 6;
+  map<string, string> metadata = 7;
+  int32 attempts = 8;
+  string last_error = 9;
+}
+
+message DlqListRequest {
+  string sink = 1;
+  int32 limit = 2;
+}
+
+message DlqListResponse {
+  repeated DlqItem items = 1;
+}
+
+message DlqCountRequest {
+  string sink = 1;
+}
+
+message DlqCountResponse {
+  int32 count = 1;
+}
+
+message DlqDiscardRequest {
+  string id = 1;
+}
+
+message DlqReplayRequest {
+  string id = 1;
+}

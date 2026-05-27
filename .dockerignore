@@ -1,0 +1,26 @@
+# Drop build outputs, IDE noise, and docs from the build context — the
+# Dockerfile only needs go.mod, go.sum, and source.
+.git
+.github
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo
+
+bin/
+tmp/
+coverage.out
+*.test
+*.prof
+
+docs/book/
+docs/build/
+
+# Local-only configs operators sometimes drop in repo root.
+.env
+.env.local
+
+# The compose file is for ops use; not needed inside the container.
+docker-compose.yml
+docker-compose.override.yml

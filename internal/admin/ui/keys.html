@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><title>parsec admin — keys</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+<h1>parsec admin — keys</h1>
+<nav>
+<a href="index.html">Home</a>
+<a href="channels.html">Channels</a>
+<a href="keys.html">Keys</a>
+<a href="dlq.html">DLQ</a>
+<a href="limits.html">Limits</a>
+<a href="#" class="signout">sign out</a>
+</nav>
+</header>
+<main>
+<form id="gen"><button>generate new key</button></form>
+<div class="err" id="err"></div>
+<p>active key: <code id="active">(loading)</code></p>
+<table id="t"><thead><tr><th>id</th><th>role</th><th>created</th><th>retired</th><th></th></tr></thead><tbody></tbody></table>
+</main>
+<script type="module">
+import { requireToken, parsecCall, mountNav, showError } from "./app.js";
+if (requireToken()) {
+mountNav();
+const err = document.getElementById("err");
+const tbody = document.querySelector("#t tbody");
+async function refresh() {
+  err.textContent = "";
+  try {
+    const r = await parsecCall("ListKeys", {});
+    document.getElementById("active").textContent = r.activeKeyId || "(none)";
+    tbody.innerHTML = "";
+    for (const k of (r.keys || [])) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + k.id + "</td><td>" + k.role + "</td><td>" + (k.createdAt || "") + "</td><td>" + (k.retiredAt || "") + "</td>";
+      const td = document.createElement("td");
+      td.className = "row-actions";
+      const promote = document.createElement("button");
+      promote.textContent = "promote";
+      promote.addEventListener("click", async () => {
+        try { await parsecCall("PromoteKey", { id: k.id }); refresh(); }
+        catch (e) { showError(err, e); }
+      });
+      const retire = document.createElement("button");
+      retire.textContent = "retire";
+      retire.addEventListener("click", async () => {
+        try { await parsecCall("RetireKey", { id: k.id }); refresh(); }
+        catch (e) { showError(err, e); }
+      });
+      td.appendChild(promote);
+      td.appendChild(retire);
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+  } catch (e) { showError(err, e); }
+}
+document.getElementById("gen").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await parsecCall("GenerateKey", {}); refresh(); }
+  catch (e) { showError(err, e); }
+});
+refresh();
+}
+</script>
+</body>
+</html>

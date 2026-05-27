@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><title>parsec admin — dlq</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+<h1>parsec admin — dead-letter queue</h1>
+<nav>
+<a href="index.html">Home</a>
+<a href="channels.html">Channels</a>
+<a href="keys.html">Keys</a>
+<a href="dlq.html">DLQ</a>
+<a href="limits.html">Limits</a>
+<a href="#" class="signout">sign out</a>
+</nav>
+</header>
+<main>
+<form id="f">
+<input id="sink" placeholder="sink name" required>
+<input id="limit" type="number" min="1" value="50">
+<button>list</button>
+</form>
+<div class="err" id="err"></div>
+<table id="t"><thead><tr><th>id</th><th>at</th><th>attempts</th><th>last error</th><th>subject</th><th></th></tr></thead><tbody></tbody></table>
+</main>
+<script type="module">
+import { requireToken, parsecCall, mountNav, showError } from "./app.js";
+if (requireToken()) {
+mountNav();
+const err = document.getElementById("err");
+const tbody = document.querySelector("#t tbody");
+async function load() {
+  err.textContent = "";
+  const sink = document.getElementById("sink").value.trim();
+  if (!sink) return;
+  try {
+    const r = await parsecCall("DlqList", { sink: sink, limit: parseInt(document.getElementById("limit").value || "50", 10) });
+    tbody.innerHTML = "";
+    for (const it of (r.items || [])) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td><code>" + it.id + "</code></td><td>" + (it.at || "") + "</td><td>" + (it.attempts || 0) + "</td><td>" + (it.lastError || "") + "</td><td>" + (it.subject || "") + "</td>";
+      const td = document.createElement("td");
+      td.className = "row-actions";
+      const rep = document.createElement("button");
+      rep.textContent = "replay";
+      rep.addEventListener("click", async () => {
+        try { await parsecCall("DlqReplay", { id: it.id }); load(); }
+        catch (e) { showError(err, e); }
+      });
+      const dis = document.createElement("button");
+      dis.textContent = "discard";
+      dis.addEventListener("click", async () => {
+        try { await parsecCall("DlqDiscard", { id: it.id }); load(); }
+        catch (e) { showError(err, e); }
+      });
+      td.appendChild(rep);
+      td.appendChild(dis);
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+    if ((r.items || []).length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td colspan=6 class=muted>no items</td>";
+      tbody.appendChild(tr);
+    }
+  } catch (e) { showError(err, e); }
+}
+document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); load(); });
+}
+</script>
+</body>
+</html>

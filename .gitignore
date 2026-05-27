@@ -1,0 +1,52 @@
+# Claude
+.claude/settings.local.json
+.planning/*
+
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Stray build outputs at repo root
+/browser
+/scoreboard
+
+# Test & coverage
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+
+# Go workspace
+go.work
+go.work.sum
+vendor/
+
+# Dependency dirs
+Godeps/
+
+# Docs (mdBook build output)
+docs/book/
+
+# Project
+.planning/
+tmp/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local

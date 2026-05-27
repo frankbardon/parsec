@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><title>parsec admin — channels</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+<h1>parsec admin — channels</h1>
+<nav>
+<a href="index.html">Home</a>
+<a href="channels.html">Channels</a>
+<a href="keys.html">Keys</a>
+<a href="dlq.html">DLQ</a>
+<a href="limits.html">Limits</a>
+<a href="#" class="signout">sign out</a>
+</nav>
+</header>
+<main>
+<h2>Open public</h2>
+<form id="open">
+<input id="open-name" placeholder="public:app.domain.topic" required>
+<input id="open-ttl" type="number" min="0" value="0" title="ttl seconds (0 = manager default)">
+<button>open</button>
+</form>
+<h2>Create private</h2>
+<form id="create">
+<input id="cr-name" placeholder="private:app.domain.id.topic" required>
+<input id="cr-sub" placeholder="subject" required>
+<input id="cr-ttl" type="number" min="0" value="0" title="ttl seconds">
+<button>create</button>
+</form>
+<div class="err" id="err"></div>
+<h2>Channels</h2>
+<table id="t"><thead><tr><th>name</th><th>state</th><th>ttl</th><th>created</th><th>last active</th><th></th></tr></thead><tbody></tbody></table>
+</main>
+<script type="module">
+import { requireToken, parsecCall, mountNav, showError } from "./app.js";
+if (!requireToken()) { /* stop */ } else {
+mountNav();
+const err = document.getElementById("err");
+const tbody = document.querySelector("#t tbody");
+async function refresh() {
+  err.textContent = "";
+  try {
+    const r = await parsecCall("ListChannels", {});
+    const list = (r && r.channels) || [];
+    tbody.innerHTML = "";
+    for (const c of list) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + c.name + "</td><td>" + c.state + "</td><td>" + (c.ttlSeconds || 0) + "</td><td>" + (c.createdAt || "") + "</td><td>" + (c.lastActive || "") + "</td>";
+      const td = document.createElement("td");
+      td.className = "row-actions";
+      const del = document.createElement("button");
+      del.textContent = "delete";
+      del.addEventListener("click", async () => {
+        try { await parsecCall("DeleteChannel", { name: c.name }); refresh(); }
+        catch (e) { showError(err, e); }
+      });
+      td.appendChild(del);
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+  } catch (e) { showError(err, e); }
+}
+document.getElementById("open").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await parsecCall("OpenPublic", {
+      name: document.getElementById("open-name").value,
+      ttlSeconds: parseInt(document.getElementById("open-ttl").value || "0", 10),
+    });
+    refresh();
+  } catch (e) { showError(err, e); }
+});
+document.getElementById("create").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const r = await parsecCall("CreatePrivate", {
+      name: document.getElementById("cr-name").value,
+      subject: document.getElementById("cr-sub").value,
+      ttlSeconds: parseInt(document.getElementById("cr-ttl").value || "0", 10),
+    });
+    err.textContent = "issued tokens for " + r.name + " (access expires " + r.accessExpiresUnix + ")";
+    refresh();
+  } catch (e) { showError(err, e); }
+});
+refresh();
+}
+</script>
+</body>
+</html>

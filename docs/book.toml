@@ -1,0 +1,21 @@
+[book]
+authors = ["Frank Bardon"]
+language = "en"
+src = "src"
+title = "Parsec Documentation"
+description = "Scalable realtime messaging engine built on Centrifuge"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/frankbardon/parsec"
+edit-url-template = "https://github.com/frankbardon/parsec/edit/main/docs/src/{path}"
+no-section-label = false
+
+[output.html.search]
+enable = true
+limit-results = 30
+boost-hierarchy = 2

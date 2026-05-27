@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(env)",
+      "Bash(go build:*)",
+      "Bash(go doc *)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "Bash(go test:*)",
+      "Bash(go tool:*)",
+      "Bash(go version:*)",
+      "Bash(go vet:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(make build:*)",
+      "Bash(make fmt:*)",
+      "Bash(make lint:*)",
+      "Bash(make proto:*)",
+      "Bash(make test:*)",
+      "Bash(make vet:*)",
+      "Bash(staticcheck:*)",
+      "Bash(wc:*)",
+      "Bash(./bin/parsec)",
+      "Bash(./bin/parsec --help)",
+      "Bash(./bin/parsec channels:*)",
+      "Bash(./bin/parsec publish:*)",
+      "Bash(./bin/parsec serve:*)",
+      "Bash(./bin/parsec mcp:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:centrifugal.dev)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/fetch-issue-context.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

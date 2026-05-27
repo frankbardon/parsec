@@ -1,0 +1,28 @@
+# Parsec config for the bundled docker-compose stack. Mounted at
+# /etc/parsec/parsec.yaml inside the container.
+
+server:
+  addr: ":8000"
+
+auth:
+  state_dir: /var/lib/parsec
+  mgmt_subject: operator
+  mgmt_ttl: 24h
+  keyring_poll: 5s
+
+redis:
+  addr: redis://redis:6379
+  key_prefix: parsec
+
+manager:
+  sweep_interval: 30s
+
+sink_retry:
+  max_attempts: 5
+  base_backoff: 1s
+  max_backoff: 30s
+
+rate_limits:
+  publish:     { rate: 100, per: 1s, burst: 30 }
+  subscribe:   { rate: 20,  per: 1s, burst: 10 }
+  token_issue: { rate: 5,   per: 1s }

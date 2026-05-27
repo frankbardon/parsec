@@ -1,0 +1,63 @@
+/* parsec admin — minimal stylesheet, dark + light tolerant. */
+:root {
+  color-scheme: light dark;
+  --fg: #111;
+  --bg: #fafafa;
+  --muted: #666;
+  --accent: #2a6df4;
+  --border: #ddd;
+  --row: #fff;
+  --err: #c0392b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #eee;
+    --bg: #1a1a1a;
+    --muted: #999;
+    --accent: #6aa8ff;
+    --border: #333;
+    --row: #222;
+    --err: #ff7a6a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+  padding: 1rem;
+  font-size: 14px;
+}
+header { border-bottom: 1px solid var(--border); margin-bottom: 1rem; padding-bottom: .5rem; }
+header h1 { margin: 0 0 .25rem 0; font-size: 1.2rem; }
+nav a { margin-right: 1rem; color: var(--accent); text-decoration: none; }
+nav a:hover { text-decoration: underline; }
+nav .signout { float: right; font-size: .9rem; }
+h2 { font-size: 1rem; margin-top: 1.5rem; }
+table { width: 100%; border-collapse: collapse; margin: .5rem 0; }
+th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--border); font-weight: normal; }
+th { color: var(--muted); font-size: .85rem; }
+tr { background: var(--row); }
+button, input, select, textarea {
+  font: inherit;
+  color: var(--fg);
+  background: var(--row);
+  border: 1px solid var(--border);
+  padding: .3rem .5rem;
+  border-radius: 3px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+input, textarea { min-width: 16rem; }
+form { margin: .5rem 0; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.err { color: var(--err); white-space: pre-wrap; font-size: .9rem; margin: .5rem 0; }
+.muted { color: var(--muted); }
+pre {
+  background: var(--row);
+  border: 1px solid var(--border);
+  padding: .5rem;
+  overflow: auto;
+  font-size: .85rem;
+}
+.row-actions button { margin-right: .25rem; }

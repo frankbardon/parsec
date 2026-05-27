@@ -1,0 +1,94 @@
+# parsec.yaml — reference configuration for `parsec serve --config <path>`
+#
+# Precedence: CLI flag > env var > this file > built-in default.
+# Every section is optional; omitted fields fall through to defaults.
+# Strings support ${ENV_VAR} interpolation so secrets can come from env.
+
+server:
+  # HTTP listen address.
+  addr: ":8000"
+  # Disable bearer auth on the management RPC. Local dev only — never production.
+  no_auth: false
+
+auth:
+  # Directory holding keyring.json. Created with mode 0700 if missing.
+  state_dir: /var/lib/parsec
+  # Subject (sub claim) for the bootstrap mgmt token printed on boot.
+  mgmt_subject: operator
+  # Lifetime of the bootstrap mgmt token.
+  mgmt_ttl: 24h
+  # Interval between keyring file mtime checks. 0 disables polling.
+  keyring_poll: 5s
+
+redis:
+  # Enable multi-node coherence by pointing at a shared Redis. Empty means
+  # single-node in-memory mode. Accepts the same address forms as
+  # centrifuge.RedisShardConfig.Address (host:port, redis://..., redis+sentinel://...).
+  # addr: redis://localhost:6379
+  # Key prefix in Redis. Override when multiple deployments share an instance.
+  key_prefix: parsec
+  # Identifier this node uses to dedupe its own pub/sub echoes. Empty = auto.
+  node_id: ""
+
+manager:
+  # How often the channel manager scans for expired channels.
+  sweep_interval: 30s
+
+sink_retry:
+  # Global retry policy applied to every registered sink.
+  max_attempts: 5
+  base_backoff: 1s
+  max_backoff: 30s
+  jitter_fraction: 0.2
+
+  # Per-sink overrides. Keys are sink names registered programmatically.
+  per_sink:
+    slack:
+      max_attempts: 3
+      base_backoff: 500ms
+
+rate_limits:
+  publish:
+    # Rate=0 disables the bucket. Burst defaults to Rate when 0.
+    rate: 100
+    per: 1s
+    burst: 30
+  subscribe:
+    rate: 20
+    per: 1s
+    burst: 10
+  token_issue:
+    # Refresh-token rate limit per remote IP (anti-abuse on the public endpoint).
+    rate: 5
+    per: 1s
+
+observability:
+  # Token required to scrape /metrics. Empty = unguarded (NOT recommended).
+  metrics_bearer_token: "${PARSEC_METRICS_TOKEN}"
+  # OTLP HTTP endpoint for OpenTelemetry traces. Empty = tracing off.
+  # otlp_endpoint: http://otelcol:4318
+  # Upstream proxy CIDRs whose X-Forwarded-For is honored.
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 192.168.0.0/16
+
+# Sink instances built at boot by the factory layer. Each key is the
+# user-chosen name (which becomes the sink's Name() and the DLQ stream
+# suffix). `kind` selects the factory (email | slack | webhook).
+sinks:
+  alerts-email:
+    kind: email
+    smtp_addr: smtp.example.com:587
+    from: ops@example.com
+    auth_user: ${SMTP_USER}
+    auth_pass: ${SMTP_PASS}
+
+  ops-slack:
+    kind: slack
+    webhook_url: ${SLACK_WEBHOOK}
+
+  partner-webhook:
+    kind: webhook
+    url: https://partner.example.com/parsec
+    headers:
+      X-Parsec-Tenant: us-east

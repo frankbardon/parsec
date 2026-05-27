@@ -1,0 +1,56 @@
+# Local dev / evaluation stack for parsec.
+#
+#   docker compose up --build
+#
+# Boots two services:
+#   - parsec on :8000 (HTTP)
+#   - redis  on :6379 (state backend)
+#
+# The bootstrap mgmt token is printed to parsec's stderr on first boot;
+# tail the logs with `docker compose logs parsec` to capture it.
+#
+# Persistent keyring lives in the named volume `parsec-state`. Drop the
+# volume to reset auth state: `docker compose down -v`.
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    ports:
+      - "6379:6379"
+
+  parsec:
+    build:
+      context: .
+      args:
+        VERSION: dev-compose
+    image: parsec:local
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # Optional metrics scrape token. Leave empty to expose /metrics
+      # unguarded on the docker network.
+      PARSEC_METRICS_TOKEN: ""
+    command:
+      - serve
+      - --config=/etc/parsec/parsec.yaml
+    ports:
+      - "8000:8000"
+    volumes:
+      - parsec-state:/var/lib/parsec
+      - ./examples/config/parsec.docker.yaml:/etc/parsec/parsec.yaml:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/parsec", "--version"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  parsec-state:

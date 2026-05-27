@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Parsec browser demo</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      max-width: 720px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      line-height: 1.45;
+    }
+    header { margin-bottom: 1.5rem; }
+    h1 { margin: 0 0 .25rem; font-size: 1.2rem; }
+    .status {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: .8rem;
+      background: #eee; color: #222;
+    }
+    .status.connected { background: #2c8a3e; color: #fff; }
+    .status.error     { background: #c33; color: #fff; }
+    .channel {
+      display: inline-block;
+      margin-left: .5rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: #f4f4f4; color: #222;
+      font-size: .8rem;
+    }
+    #log {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: 60vh;
+      overflow-y: auto;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    #log li {
+      padding: .5rem .75rem;
+      border-bottom: 1px solid #eee;
+      font-size: .85rem;
+    }
+    #log li:last-child { border-bottom: none; }
+    .ts    { color: #666; }
+    .body  { display: block; margin-top: .25rem; word-break: break-all; }
+    @media (prefers-color-scheme: dark) {
+      .channel { background: #1a1a1a; color: #ddd; }
+      #log     { border-color: #333; }
+      #log li  { border-bottom-color: #222; }
+      .ts      { color: #999; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Parsec browser demo
+      <span id="status" class="status">connecting…</span>
+      <span class="channel">{{CHANNEL}}</span>
+    </h1>
+    <p>The Go server publishes a heartbeat every second on a public
+       channel. This page subscribes via centrifuge-js and renders each
+       publication below.</p>
+  </header>
+
+  <ul id="log"></ul>
+
+  <!--
+    centrifuge-js is the official Centrifugo client. parsec speaks the
+    same wire protocol so this drop-in works without modification.
+    Pinned to a tagged release for reproducibility.
+  -->
+  <script src="https://unpkg.com/centrifuge@5.4.0/dist/centrifuge.js"></script>
+  <script>
+    const channel = "{{CHANNEL}}";
+    const statusEl = document.getElementById("status");
+    const logEl    = document.getElementById("log");
+
+    const centrifuge = new Centrifuge("ws://" + location.host + "/connection/websocket");
+
+    centrifuge.on("connected", () => {
+      statusEl.textContent = "connected";
+      statusEl.className = "status connected";
+    });
+    centrifuge.on("disconnected", (ctx) => {
+      statusEl.textContent = "disconnected (" + ctx.reason + ")";
+      statusEl.className = "status error";
+    });
+    centrifuge.on("error", (ctx) => {
+      statusEl.textContent = "error: " + ctx.error.message;
+      statusEl.className = "status error";
+    });
+
+    const sub = centrifuge.newSubscription(channel);
+    sub.on("publication", (ctx) => {
+      const li = document.createElement("li");
+      const ts = document.createElement("span");
+      ts.className = "ts";
+      ts.textContent = new Date().toISOString();
+      const body = document.createElement("code");
+      body.className = "body";
+      body.textContent = JSON.stringify(ctx.data);
+      li.appendChild(ts);
+      li.appendChild(body);
+      logEl.insertBefore(li, logEl.firstChild);
+      // Keep last 50 entries.
+      while (logEl.children.length > 50) {
+        logEl.removeChild(logEl.lastChild);
+      }
+    });
+    sub.subscribe();
+
+    centrifuge.connect();
+  </script>
+</body>
+</html>

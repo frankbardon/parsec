@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><title>parsec admin</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+<h1>parsec admin</h1>
+<nav>
+<a href="channels.html">Channels</a>
+<a href="keys.html">Keys</a>
+<a href="dlq.html">DLQ</a>
+<a href="limits.html">Limits</a>
+<a href="#" class="signout">sign out</a>
+</nav>
+</header>
+<main>
+<p class="muted">Operator-grade diagnostic UI. Pick a section above.</p>
+<pre id="manifest">loading manifest...</pre>
+</main>
+<script type="module">
+import { requireToken, parsecCall, mountNav, showError } from "./app.js";
+if (requireToken()) {
+  mountNav();
+  parsecCall("Manifest", {}).then(r => {
+    const txt = r && r.payload ? atob(r.payload) : "(no manifest)";
+    document.getElementById("manifest").textContent = txt;
+  }).catch(e => showError(document.getElementById("manifest"), e));
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><title>parsec admin — sign in</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header><h1>parsec admin</h1></header>
+<main>
+<h2>Paste mgmt bearer</h2>
+<p class="muted">Token is stored in <code>sessionStorage</code> and cleared when you close the tab.</p>
+<form id="f">
+<textarea id="tok" rows="4" placeholder="eyJhbGc..." required></textarea>
+<button type="submit">sign in</button>
+</form>
+<div class="err" id="err"></div>
+</main>
+<script type="module">
+import { setToken, parsecCall, showError } from "./app.js";
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const t = document.getElementById("tok").value.trim();
+  if (!t) return;
+  setToken(t);
+  try {
+    // Probe a bearer-gated method so we fail fast on bad tokens.
+    await parsecCall("ListChannels", {});
+    window.location.href = "index.html";
+  } catch (err) {
+    showError(document.getElementById("err"), err);
+  }
+});
+</script>
+</body>
+</html>
