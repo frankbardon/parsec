@@ -25,6 +25,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -197,6 +198,23 @@ type Options struct {
 	// validation or active replication against this list — it is purely
 	// declarative.
 	Peers []string
+
+	// SchemaHandler, when non-nil, is mounted at /parsec/schemas. The
+	// HTTP surface delegates to the supplied handler so the embedder
+	// can plug a schema.MemoryRegistry (or any other Registry impl)
+	// without parsec.go importing the schema package itself.
+	SchemaHandler http.Handler
+
+	// TokenBrokerHandler, when non-nil, is mounted under /parsec
+	// (/parsec/token, /parsec/token/delegate, /parsec/revoke). The
+	// embedder constructs a tokenbroker.Broker, configures its
+	// Authenticator / Authorizer, and passes Broker.Handler() here.
+	TokenBrokerHandler http.Handler
+
+	// TelemetryHandler, when non-nil, is mounted at /parsec/metrics
+	// and serves the aggregated JSON snapshot. The native /metrics
+	// Prometheus endpoint is unaffected.
+	TelemetryHandler http.Handler
 }
 
 // OIDCEnabled reports whether the OIDC bridge is configured. Convenience
@@ -828,6 +846,18 @@ func (p *Parsec) Manager() *channels.Manager { return p.manager }
 
 // Sinks returns the registry.
 func (p *Parsec) Sinks() *sinks.Registry { return p.opts.Sinks }
+
+// SchemaHandler returns the optional handler mounted at /parsec/schemas,
+// or nil when no schema registry was wired.
+func (p *Parsec) SchemaHandler() http.Handler { return p.opts.SchemaHandler }
+
+// TokenBrokerHandler returns the optional handler mounted under /parsec
+// (token, token/delegate, revoke), or nil when no broker was wired.
+func (p *Parsec) TokenBrokerHandler() http.Handler { return p.opts.TokenBrokerHandler }
+
+// TelemetryHandler returns the optional aggregated /parsec/metrics
+// handler, or nil when telemetry aggregation is not wired.
+func (p *Parsec) TelemetryHandler() http.Handler { return p.opts.TelemetryHandler }
 
 // Verifier returns the HMAC token verifier. Surface code that needs to
 // accept either HMAC or OIDC tokens should prefer CompositeVerifier

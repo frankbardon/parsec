@@ -198,6 +198,82 @@ func cloneScopesForClaim(scopes []Scope) []Scope {
 	return out
 }
 
+// IssuePairForChannels mints an access + refresh token pair that
+// authorizes the listed channels (rather than a single channel like
+// IssuePair). The refresh TTL is bounded by min(ttl, MaxRefreshTTL);
+// the access TTL by min(AccessTTL, refresh). Used by the token
+// broker for multi-channel issuance.
+func (i *Issuer) IssuePairForChannels(sub string, chs []string, ttl time.Duration, scopes []Scope) (PairResult, error) {
+	if len(chs) == 0 {
+		return PairResult{}, errors.New("auth: at least one channel required")
+	}
+	if ttl <= 0 {
+		return PairResult{}, errors.New("auth: ttl must be positive")
+	}
+	if err := validateScopes(scopes); err != nil {
+		return PairResult{}, err
+	}
+	now := i.clock()
+	refreshTTL := ttl
+	if i.MaxRefreshTTL > 0 && refreshTTL > i.MaxRefreshTTL {
+		refreshTTL = i.MaxRefreshTTL
+	}
+	accessTTL := i.AccessTTL
+	if accessTTL > refreshTTL {
+		accessTTL = refreshTTL
+	}
+	if accessTTL < time.Minute {
+		accessTTL = time.Minute
+	}
+	accessExp := now.Add(accessTTL)
+	refreshExp := now.Add(refreshTTL)
+	chCopy := append([]string(nil), chs...)
+	scopesCopy := cloneScopesForClaim(scopes)
+	access, err := i.signer.Sign(Claims{
+		Sub: sub, Typ: TypeAccess, Chs: chCopy,
+		Iat: now.Unix(), Exp: accessExp.Unix(),
+		Scopes: scopesCopy,
+	})
+	if err != nil {
+		return PairResult{}, err
+	}
+	refresh, err := i.signer.Sign(Claims{
+		Sub: sub, Typ: TypeRefresh, Chs: chCopy,
+		Iat: now.Unix(), Exp: refreshExp.Unix(),
+		Scopes: scopesCopy,
+	})
+	if err != nil {
+		return PairResult{}, err
+	}
+	return PairResult{
+		AccessToken:    access,
+		RefreshToken:   refresh,
+		AccessExpires:  accessExp,
+		RefreshExpires: refreshExp,
+	}, nil
+}
+
+// IssueAccessForChannels mints a fresh access token authorizing chs.
+// The expiry is min(now+AccessTTL, refreshExp).
+func (i *Issuer) IssueAccessForChannels(sub string, chs []string, refreshExp time.Time) (string, time.Time, error) {
+	if len(chs) == 0 {
+		return "", time.Time{}, errors.New("auth: at least one channel required")
+	}
+	now := i.clock()
+	exp := now.Add(i.AccessTTL)
+	if exp.After(refreshExp) {
+		exp = refreshExp
+	}
+	if !exp.After(now) {
+		return "", time.Time{}, errors.New("auth: refresh token has expired")
+	}
+	tok, err := i.signer.Sign(Claims{
+		Sub: sub, Typ: TypeAccess, Chs: append([]string(nil), chs...),
+		Iat: now.Unix(), Exp: exp.Unix(),
+	})
+	return tok, exp, err
+}
+
 // IssuePairWithRateLimit is IssuePair with an additional per-token rate
 // limit embedded in the access + refresh claims (rl). When the rate
 // limiter is consulted at publish/subscribe time the override beats the

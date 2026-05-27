@@ -98,6 +98,22 @@ func New(p *parsec.Parsec, svc *service.Service, logger *slog.Logger, validate B
 		logger.Info("admin ui enabled", "mount", "/admin")
 	}
 
+	// Optional upgrade-spec surfaces. Each is mounted only when the
+	// embedder supplied a handler via Options.
+	if h := p.SchemaHandler(); h != nil {
+		mux.Handle("/parsec/schemas", h)
+		mux.Handle("/parsec/schemas/", h)
+		logger.Info("schema registry mounted", "path", "/parsec/schemas")
+	}
+	if h := p.TokenBrokerHandler(); h != nil {
+		mux.Handle("/parsec/", http.StripPrefix("/parsec", h))
+		logger.Info("token broker mounted", "prefix", "/parsec")
+	}
+	if h := p.TelemetryHandler(); h != nil {
+		mux.Handle("/parsec/metrics", h)
+		logger.Info("telemetry mounted", "path", "/parsec/metrics")
+	}
+
 	// Prometheus scrape endpoint. Bearer-gated when MetricsBearerToken
 	// is set; unguarded otherwise (operator firewalls it at the network
 	// layer or binds /metrics to a private interface).
