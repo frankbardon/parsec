@@ -147,12 +147,3 @@ func (m *MemoryLimiter) Sweep() int {
 	return removed
 }
 
-// recordDecision is a metrics hook stub. Phase 13 owns the metrics
-// registry; this function exists so call sites can be left in place once
-// the registry lands. The bucket arg is opaque here; the wrapper at the
-// service-layer call site passes the right label.
-func recordDecision(bucket string, allowed bool) {
-	// TODO(phase-13): record rate-limit metric via internal/metrics/registry.
-	_ = bucket
-	_ = allowed
-}

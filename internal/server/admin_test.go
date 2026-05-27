@@ -128,11 +128,10 @@ func TestAdminUI_EnabledServesAssets(t *testing.T) {
 // UI does not weaken the Twirp bearer gate — every protected RPC
 // continues to return 401 without a token.
 func TestAdminUI_BearerStillEnforcedOnAPI(t *testing.T) {
-	srv, p, stop := adminServer(t, true, nil)
+	_, _, stop := adminServer(t, true, nil)
 	stop()
-	_ = p
 	// Re-boot with a real validator so the bearer middleware is active.
-	srv, _, stop = adminServer(t, true, func(token string) error {
+	srv, _, stop := adminServer(t, true, func(token string) error {
 		// Reject every token — we want to confirm the 401 path.
 		return auth.ErrMalformedToken
 	})
