@@ -147,6 +147,7 @@ func newWTTransport(s *wtgo.Session, stream *wtgo.Stream) *wtTransport {
 }
 
 func (t *wtTransport) Name() string                          { return "webtransport" }
+func (t *wtTransport) AcceptProtocol() string                { return "h3" }
 func (t *wtTransport) Protocol() centrifuge.ProtocolType     { return centrifuge.ProtocolTypeProtobuf }
 func (t *wtTransport) ProtocolVersion() centrifuge.ProtocolVersion {
 	return centrifuge.ProtocolVersion2
