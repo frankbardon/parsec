@@ -29,8 +29,10 @@ test:
 
 # test-integration runs the full suite with the race detector enabled and
 # a tightened timeout. Designed for CI; locally `make test` is faster.
+# The race detector requires CGO, so this target overrides the
+# CGO_ENABLED=0 default applied above.
 test-integration:
-	$(GO) test -race -count=1 -timeout=120s ./...
+	CGO_ENABLED=1 $(GO) test -race -count=1 -timeout=120s ./...
 
 cover:
 	$(GO) test -coverprofile=coverage.out ./...
