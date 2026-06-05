@@ -60,6 +60,7 @@ type Metrics struct {
 	RPCRequestsTotal       *prometheus.CounterVec
 	RPCDuration            *prometheus.HistogramVec
 	RateLimitDecisions     *prometheus.CounterVec
+	RefreshRotations       *prometheus.CounterVec
 }
 
 // New constructs a fresh Metrics bundle backed by a fresh registry. The
@@ -155,12 +156,16 @@ func NewWithRegistryAndRegion(reg *prometheus.Registry, region string) *Metrics 
 			Name: "parsec_rate_limit_decisions_total",
 			Help: "Rate-limit decisions by bucket (publish/subscribe/token-issue) and result (allowed/denied).",
 		}, []string{"bucket", "result"}),
+		RefreshRotations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "parsec_refresh_rotations_total",
+			Help: "Refresh-token rotation outcomes (rotated, reused, family_revoked, legacy).",
+		}, []string{"result"}),
 	}
 	for _, c := range []prometheus.Collector{
 		m.PublishesTotal, m.PublishDuration, m.SubscribersActive, m.ChannelsActive,
 		m.TokenVerificationTotal, m.SinkAttemptsTotal, m.SinkDuration, m.DLQSize,
 		m.KeyRotationsTotal, m.RPCRequestsTotal, m.RPCDuration,
-		m.RateLimitDecisions,
+		m.RateLimitDecisions, m.RefreshRotations,
 	} {
 		// Skip duplicate registrations — callers may share a registry
 		// across two Metrics bundles in tests.

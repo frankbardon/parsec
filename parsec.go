@@ -98,6 +98,18 @@ type Options struct {
 	// MaxRefreshTokenTTL overrides the default refresh-token cap (1h).
 	MaxRefreshTokenTTL time.Duration
 
+	// RefreshStore tracks redeemed refresh JTIs and revoked rotation
+	// families. When nil and a RedisClient is configured parsec.New
+	// builds a RedisRefreshStore; otherwise a MemoryRefreshStore. The
+	// store gates RefreshAccess so a leaked refresh token cannot be
+	// redeemed twice without revoking the entire family.
+	RefreshStore auth.RefreshStore
+
+	// MemoryRefreshPruneInterval is the cleanup interval used when
+	// parsec.New constructs the default MemoryRefreshStore. Default
+	// 5 minutes. Ignored when RefreshStore is explicit.
+	MemoryRefreshPruneInterval time.Duration
+
 	// BrokerOptions are forwarded to broker.New. The SubscribeAuthorizer
 	// is overridden by parsec.New to use the Verifier.
 	BrokerOptions broker.Options
@@ -248,6 +260,8 @@ type Parsec struct {
 
 	limiter    ratelimit.Limiter
 	rateLimits ratelimit.RateLimits
+
+	refreshStore auth.RefreshStore
 }
 
 // New constructs a Parsec instance. The broker is created but not started;
@@ -382,6 +396,9 @@ func New(opts Options) (*Parsec, error) {
 		opts.AccessLogger = logger
 	}
 
+	// Resolve refresh store: explicit > Redis > in-memory.
+	refreshStore := buildRefreshStore(opts)
+
 	// Resolve DLQ: explicit > Redis-backed > in-memory.
 	dlq, backend := buildDLQ(opts)
 
@@ -419,11 +436,34 @@ func New(opts Options) (*Parsec, error) {
 		wrappedReg:     wrapped,
 		limiter:        limiter,
 		rateLimits:     rl,
+		refreshStore:   refreshStore,
 	}
 	// Replace the user-supplied registry pointer with the wrapped one so
 	// PublishOrSink and Sinks() see the retry-aware shape.
 	p.opts.Sinks = wrapped
 	return p, nil
+}
+
+// buildRefreshStore resolves the refresh-rotation store. Explicit
+// option wins; otherwise Redis when a client is configured, in-memory
+// fallback otherwise. The default memory pruner runs every 5 minutes
+// so expired records do not accumulate indefinitely.
+func buildRefreshStore(opts Options) auth.RefreshStore {
+	if opts.RefreshStore != nil {
+		return opts.RefreshStore
+	}
+	if opts.RedisClient != nil {
+		prefix := opts.RedisKeyPrefix
+		if prefix == "" {
+			prefix = "parsec"
+		}
+		return auth.NewRedisRefreshStore(opts.RedisClient).WithKeyPrefix(prefix)
+	}
+	interval := opts.MemoryRefreshPruneInterval
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+	return auth.NewMemoryRefreshStore(interval)
 }
 
 // buildDLQ returns the DLQ to thread through retry-wrapping. The default
@@ -1100,15 +1140,42 @@ func (p *Parsec) CreatePrivate(subjectID, name string, ttl time.Duration, scopes
 	}, nil
 }
 
-// RefreshResult is what RefreshAccess returns.
+// RefreshResult is what RefreshAccess returns. The RefreshToken /
+// RefreshExpires fields are populated on rotation — a token carrying
+// a JTI yields a fresh refresh in the same family. Legacy tokens
+// (no JTI) leave them zero-valued so older clients keep working.
 type RefreshResult struct {
-	AccessToken   string
-	AccessExpires time.Time
+	AccessToken    string
+	AccessExpires  time.Time
+	RefreshToken   string
+	RefreshExpires time.Time
+	Rotated        bool
 }
 
-// RefreshAccess verifies refreshToken, confirms the channel still exists,
-// and mints a new access token bounded by the refresh expiry.
+// RefreshAccess verifies refreshToken, enforces rotation policy via
+// the RefreshStore, and mints a fresh access (and, when the token
+// carries a JTI, a fresh refresh in the same family).
+//
+// Rotation rules:
+//
+//  1. Tokens without JTI are legacy: mint a new access only. The
+//     store is untouched.
+//  2. Tokens with JTI consult the store. A revoked family or an
+//     already-redeemed JTI returns PARSEC_AUTH_DENIED. A reused JTI
+//     additionally revokes the family so subsequent siblings fail
+//     even before the JTI check.
+//  3. On success, both tokens are reissued: the new refresh shares
+//     the old FID, a fresh JTI, and refresh TTL bounded by the
+//     channel TTL and MaxRefreshTTL.
 func (p *Parsec) RefreshAccess(refreshToken string) (RefreshResult, error) {
+	return p.RefreshAccessCtx(context.Background(), refreshToken)
+}
+
+// RefreshAccessCtx is RefreshAccess with an explicit context. The
+// context is forwarded to the RefreshStore so Redis-backed stores
+// pick up the caller's cancellation + deadline. Most callers should
+// use RefreshAccess; this overload exists for the RPC adapter.
+func (p *Parsec) RefreshAccessCtx(ctx context.Context, refreshToken string) (RefreshResult, error) {
 	claims, err := p.verifier.Verify(refreshToken, auth.TypeRefresh)
 	if err != nil {
 		return RefreshResult{}, auth.MapErr(err)
@@ -1127,11 +1194,66 @@ func (p *Parsec) RefreshAccess(refreshToken string) (RefreshResult, error) {
 	if ch.State != channels.StateOpen {
 		return RefreshResult{}, perr.New(perr.ChannelClosed, "channel is not open")
 	}
-	access, exp, err := p.issuer.IssueAccess(claims.Sub, claims.Chs[0], claims.ExpiresAt(), claims.Scopes)
-	if err != nil {
-		return RefreshResult{}, perr.Wrap(perr.AuthDenied, "issue access from refresh", err)
+
+	// Legacy token (no JTI): no store interaction, mint access only.
+	if claims.JTI == "" {
+		access, exp, err := p.issuer.IssueAccess(claims.Sub, claims.Chs[0], claims.ExpiresAt(), claims.Scopes)
+		if err != nil {
+			return RefreshResult{}, perr.Wrap(perr.AuthDenied, "issue access from refresh", err)
+		}
+		p.recordRefresh("legacy")
+		return RefreshResult{AccessToken: access, AccessExpires: exp}, nil
 	}
-	return RefreshResult{AccessToken: access, AccessExpires: exp}, nil
+
+	// Rotated path: family revocation gate first, then atomic JTI
+	// redemption. The order matters — a revoked family must be
+	// rejected even if the JTI itself is still fresh.
+	if p.refreshStore != nil {
+		revoked, err := p.refreshStore.IsFamilyRevoked(ctx, claims.FID)
+		if err != nil {
+			return RefreshResult{}, perr.Wrap(perr.Internal, "refresh store family check", err)
+		}
+		if revoked {
+			p.recordRefresh("family_revoked")
+			return RefreshResult{}, perr.New(perr.AuthDenied, "refresh family revoked")
+		}
+		if err := p.refreshStore.MarkRedeemed(ctx, claims.JTI, claims.ExpiresAt()); err != nil {
+			if errors.Is(err, auth.ErrRefreshReused) {
+				// Reuse trips the family kill-switch. Errors from
+				// RevokeFamily are surfaced — losing it would leave
+				// a known-leaked family alive past this call.
+				if rerr := p.refreshStore.RevokeFamily(ctx, claims.FID, claims.ExpiresAt()); rerr != nil {
+					return RefreshResult{}, perr.Wrap(perr.Internal, "revoke leaked family", rerr)
+				}
+				p.recordRefresh("reused")
+				return RefreshResult{}, perr.New(perr.AuthDenied, "refresh token already redeemed; family revoked")
+			}
+			return RefreshResult{}, perr.Wrap(perr.Internal, "refresh store redeem", err)
+		}
+	}
+
+	pair, err := p.issuer.IssueRotatedPair(claims.Sub, claims.Chs[0], claims.FID, ch.TTL, claims.Scopes)
+	if err != nil {
+		return RefreshResult{}, perr.Wrap(perr.AuthDenied, "issue rotated pair", err)
+	}
+	p.recordRefresh("rotated")
+	return RefreshResult{
+		AccessToken:    pair.AccessToken,
+		AccessExpires:  pair.AccessExpires,
+		RefreshToken:   pair.RefreshToken,
+		RefreshExpires: pair.RefreshExpires,
+		Rotated:        true,
+	}, nil
+}
+
+// recordRefresh increments the rotation outcome metric. No-op when
+// the metric collector is not present (e.g. test instances that
+// share a zero Metrics).
+func (p *Parsec) recordRefresh(result string) {
+	if p.metrics == nil || p.metrics.RefreshRotations == nil {
+		return
+	}
+	p.metrics.RefreshRotations.WithLabelValues(result).Inc()
 }
 
 // Publish ships data to a managed channel.

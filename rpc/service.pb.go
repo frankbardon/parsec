@@ -784,13 +784,20 @@ func (x *RefreshTokenRequest) GetRefreshToken() string {
 	return ""
 }
 
-// RefreshTokenResponse carries the new access token + its expiry.
+// RefreshTokenResponse carries the new access token + its expiry. When
+// the redeemed refresh carried a rotation JTI the server also returns a
+// fresh refresh in the same family; legacy callers may ignore the
+// rotation fields, but a client that does ignore them will fail on the
+// next redemption because the JTI is now marked redeemed server-side.
 type RefreshTokenResponse struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	AccessToken       string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
-	AccessExpiresUnix int64                  `protobuf:"varint,2,opt,name=access_expires_unix,json=accessExpiresUnix,proto3" json:"access_expires_unix,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken        string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	AccessExpiresUnix  int64                  `protobuf:"varint,2,opt,name=access_expires_unix,json=accessExpiresUnix,proto3" json:"access_expires_unix,omitempty"`
+	RefreshToken       string                 `protobuf:"bytes,3,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`
+	RefreshExpiresUnix int64                  `protobuf:"varint,4,opt,name=refresh_expires_unix,json=refreshExpiresUnix,proto3" json:"refresh_expires_unix,omitempty"`
+	Rotated            bool                   `protobuf:"varint,5,opt,name=rotated,proto3" json:"rotated,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *RefreshTokenResponse) Reset() {
@@ -835,6 +842,27 @@ func (x *RefreshTokenResponse) GetAccessExpiresUnix() int64 {
 		return x.AccessExpiresUnix
 	}
 	return 0
+}
+
+func (x *RefreshTokenResponse) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+func (x *RefreshTokenResponse) GetRefreshExpiresUnix() int64 {
+	if x != nil {
+		return x.RefreshExpiresUnix
+	}
+	return 0
+}
+
+func (x *RefreshTokenResponse) GetRotated() bool {
+	if x != nil {
+		return x.Rotated
+	}
+	return false
 }
 
 // IssueMgmtRequest mints a new mgmt bearer signed by the currently active
@@ -1556,10 +1584,13 @@ const file_service_proto_rawDesc = "" +
 	"\x10PresenceResponse\x12 \n" +
 	"\vsubscribers\x18\x01 \x01(\x05R\vsubscribers\":\n" +
 	"\x13RefreshTokenRequest\x12#\n" +
-	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"i\n" +
+	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"\xda\x01\n" +
 	"\x14RefreshTokenResponse\x12!\n" +
 	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12.\n" +
-	"\x13access_expires_unix\x18\x02 \x01(\x03R\x11accessExpiresUnix\"M\n" +
+	"\x13access_expires_unix\x18\x02 \x01(\x03R\x11accessExpiresUnix\x12#\n" +
+	"\rrefresh_token\x18\x03 \x01(\tR\frefreshToken\x120\n" +
+	"\x14refresh_expires_unix\x18\x04 \x01(\x03R\x12refreshExpiresUnix\x12\x18\n" +
+	"\arotated\x18\x05 \x01(\bR\arotated\"M\n" +
 	"\x10IssueMgmtRequest\x12\x18\n" +
 	"\asubject\x18\x01 \x01(\tR\asubject\x12\x1f\n" +
 	"\vttl_seconds\x18\x02 \x01(\x03R\n" +

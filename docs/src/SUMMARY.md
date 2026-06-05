@@ -58,6 +58,7 @@
 - [Deployment](ops/deployment.md)
 - [Configuration File](ops/config.md)
 - [Key Rotation Runbook](ops/key-rotation.md)
+- [Refresh-Token Rotation](ops/refresh-rotation.md)
 - [OIDC Bridge](ops/oidc.md)
 - [Observability](ops/observability.md)
 - [Dead-Letter Queue](ops/dlq.md)
