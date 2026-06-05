@@ -1,0 +1,65 @@
+{
+  "patterns": [
+    {
+      "pattern": "sessions:{id}",
+      "description": "session channels",
+      "version": 1,
+      "aspects": {
+        "data": {
+          "name": "data",
+          "description": "primary content updates",
+          "payload_schema": {
+            "type": "object",
+            "required": ["text"],
+            "properties": {
+              "text": {"type": "string", "description": "rendered message"},
+              "tokens": {"type": "integer"},
+              "tags": {"type": "array", "items": {"type": "string"}},
+              "meta": {
+                "type": "object",
+                "properties": {
+                  "source": {"type": "string"},
+                  "score": {"type": "number"}
+                }
+              }
+            }
+          }
+        },
+        "cursor": {
+          "name": "cursor",
+          "payload_schema": {
+            "type": "object",
+            "required": ["user_id", "position"],
+            "properties": {
+              "user_id": {"type": "string"},
+              "position": {"type": "integer"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "pattern": "brands:meridian.reports",
+      "description": "reports for the meridian brand",
+      "version": 1,
+      "aspects": {
+        "summary": {
+          "name": "summary",
+          "payload_schema": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "pattern": "events.**",
+      "version": 1,
+      "aspects": {
+        "raw": {
+          "name": "raw"
+        }
+      }
+    }
+  ],
+  "at": "2026-06-05T00:00:00Z"
+}

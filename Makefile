@@ -20,6 +20,7 @@ endif
 
 build:
 	$(GO) build $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/parsec
+	$(GO) build $(BUILD_FLAGS) -o $(BUILD_DIR)/parsec-gen ./cmd/parsec-gen
 
 clean:
 	rm -rf $(BUILD_DIR) coverage.out

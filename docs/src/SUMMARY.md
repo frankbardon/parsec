@@ -27,6 +27,7 @@
 - [keys](cli/keys.md)
 - [dlq](cli/dlq.md)
 - [login / logout](cli/login.md)
+- [parsec-gen (codegen)](cli/gen.md)
 
 # Library Embedding
 
