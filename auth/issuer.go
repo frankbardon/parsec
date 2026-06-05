@@ -76,6 +76,10 @@ func (i *Issuer) IssuePair(sub, channel string, channelTTL time.Duration, scopes
 	accessExp := now.Add(accessTTL)
 	refreshExp := now.Add(refreshTTL)
 	scopesCopy := cloneScopesForClaim(scopes)
+	jti, fid, err := newRefreshIDs()
+	if err != nil {
+		return PairResult{}, err
+	}
 	access, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: []string{channel},
 		Iat: now.Unix(), Exp: accessExp.Unix(),
@@ -88,6 +92,8 @@ func (i *Issuer) IssuePair(sub, channel string, channelTTL time.Duration, scopes
 		Sub: sub, Typ: TypeRefresh, Chs: []string{channel},
 		Iat: now.Unix(), Exp: refreshExp.Unix(),
 		Scopes: scopesCopy,
+		JTI:    jti,
+		FID:    fid,
 	})
 	if err != nil {
 		return PairResult{}, err
@@ -98,6 +104,22 @@ func (i *Issuer) IssuePair(sub, channel string, channelTTL time.Duration, scopes
 		AccessExpires:  accessExp,
 		RefreshExpires: refreshExp,
 	}, nil
+}
+
+// newRefreshIDs returns a fresh (jti, fid) pair used to stamp a refresh
+// token. The two are independent: jti identifies this single refresh,
+// fid binds the rotation chain so the store can revoke the family on
+// reuse.
+func newRefreshIDs() (string, string, error) {
+	jti, err := newTokenID()
+	if err != nil {
+		return "", "", err
+	}
+	fid, err := newTokenID()
+	if err != nil {
+		return "", "", err
+	}
+	return jti, fid, nil
 }
 
 // IssueAccess mints a single access token from a verified refresh. The
@@ -229,6 +251,10 @@ func (i *Issuer) IssuePairForChannels(sub string, chs []string, ttl time.Duratio
 	refreshExp := now.Add(refreshTTL)
 	chCopy := append([]string(nil), chs...)
 	scopesCopy := cloneScopesForClaim(scopes)
+	jti, fid, err := newRefreshIDs()
+	if err != nil {
+		return PairResult{}, err
+	}
 	access, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: chCopy,
 		Iat: now.Unix(), Exp: accessExp.Unix(),
@@ -241,6 +267,8 @@ func (i *Issuer) IssuePairForChannels(sub string, chs []string, ttl time.Duratio
 		Sub: sub, Typ: TypeRefresh, Chs: chCopy,
 		Iat: now.Unix(), Exp: refreshExp.Unix(),
 		Scopes: scopesCopy,
+		JTI:    jti,
+		FID:    fid,
 	})
 	if err != nil {
 		return PairResult{}, err
@@ -272,6 +300,73 @@ func (i *Issuer) IssueAccessForChannels(sub string, chs []string, refreshExp tim
 		Iat: now.Unix(), Exp: exp.Unix(),
 	})
 	return tok, exp, err
+}
+
+// IssueRotatedPair mints a fresh access + refresh pair that continues
+// an existing rotation family. The new refresh inherits oldFID so the
+// store can revoke the entire chain on reuse; a fresh JTI prevents the
+// new refresh from colliding with the redeemed predecessor.
+//
+// channelTTL bounds the refresh expiry the same way IssuePair does
+// (min(channelTTL, MaxRefreshTTL)). The caller has already verified
+// the old refresh; this method does NOT itself touch the rotation
+// store — the wrapping parsec.RefreshAccess flow does.
+func (i *Issuer) IssueRotatedPair(sub, channel, oldFID string, channelTTL time.Duration, scopes []Scope) (PairResult, error) {
+	if channel == "" {
+		return PairResult{}, errors.New("auth: channel required")
+	}
+	if oldFID == "" {
+		return PairResult{}, errors.New("auth: family ID required for rotation")
+	}
+	if channelTTL <= 0 {
+		return PairResult{}, errors.New("auth: channelTTL must be positive")
+	}
+	if err := validateScopes(scopes); err != nil {
+		return PairResult{}, err
+	}
+	now := i.clock()
+	refreshTTL := channelTTL
+	if i.MaxRefreshTTL > 0 && refreshTTL > i.MaxRefreshTTL {
+		refreshTTL = i.MaxRefreshTTL
+	}
+	accessTTL := i.AccessTTL
+	if accessTTL > refreshTTL {
+		accessTTL = refreshTTL
+	}
+	if accessTTL < time.Minute {
+		accessTTL = time.Minute
+	}
+	accessExp := now.Add(accessTTL)
+	refreshExp := now.Add(refreshTTL)
+	jti, err := newTokenID()
+	if err != nil {
+		return PairResult{}, err
+	}
+	scopesCopy := cloneScopesForClaim(scopes)
+	access, err := i.signer.Sign(Claims{
+		Sub: sub, Typ: TypeAccess, Chs: []string{channel},
+		Iat: now.Unix(), Exp: accessExp.Unix(),
+		Scopes: scopesCopy,
+	})
+	if err != nil {
+		return PairResult{}, err
+	}
+	refresh, err := i.signer.Sign(Claims{
+		Sub: sub, Typ: TypeRefresh, Chs: []string{channel},
+		Iat: now.Unix(), Exp: refreshExp.Unix(),
+		Scopes: scopesCopy,
+		JTI:    jti,
+		FID:    oldFID,
+	})
+	if err != nil {
+		return PairResult{}, err
+	}
+	return PairResult{
+		AccessToken:    access,
+		RefreshToken:   refresh,
+		AccessExpires:  accessExp,
+		RefreshExpires: refreshExp,
+	}, nil
 }
 
 // IssuePairWithRateLimit is IssuePair with an additional per-token rate
@@ -307,6 +402,10 @@ func (i *Issuer) IssuePairWithRateLimit(sub, channel string, channelTTL time.Dur
 		n := override.Normalize()
 		rl = &n
 	}
+	jti, fid, err := newRefreshIDs()
+	if err != nil {
+		return PairResult{}, err
+	}
 	access, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: []string{channel},
 		Iat: now.Unix(), Exp: accessExp.Unix(),
@@ -319,6 +418,8 @@ func (i *Issuer) IssuePairWithRateLimit(sub, channel string, channelTTL time.Dur
 		Sub: sub, Typ: TypeRefresh, Chs: []string{channel},
 		Iat: now.Unix(), Exp: refreshExp.Unix(),
 		RateLimitOverride: rl,
+		JTI:               jti,
+		FID:               fid,
 	})
 	if err != nil {
 		return PairResult{}, err

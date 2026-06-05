@@ -128,10 +128,16 @@ func (c *Client) RefreshToken(ctx context.Context, refresh string) (RefreshSumma
 	if err != nil {
 		return RefreshSummary{}, mapErr(err)
 	}
-	return RefreshSummary{
+	out := RefreshSummary{
 		AccessToken:   res.GetAccessToken(),
 		AccessExpires: time.Unix(res.GetAccessExpiresUnix(), 0).UTC().Format(time.RFC3339),
-	}, nil
+		Rotated:       res.GetRotated(),
+	}
+	if rt := res.GetRefreshToken(); rt != "" {
+		out.RefreshToken = rt
+		out.RefreshExpires = time.Unix(res.GetRefreshExpiresUnix(), 0).UTC().Format(time.RFC3339)
+	}
+	return out, nil
 }
 
 // GetChannel returns one channel snapshot.
@@ -199,10 +205,14 @@ type CredentialsSummary struct {
 	RefreshExpires string `json:"refresh_expires"`
 }
 
-// RefreshSummary is the CLI-shaped refresh result.
+// RefreshSummary is the CLI-shaped refresh result. RefreshToken /
+// RefreshExpires are populated on rotation; legacy servers omit them.
 type RefreshSummary struct {
-	AccessToken   string `json:"access_token"`
-	AccessExpires string `json:"access_expires"`
+	AccessToken    string `json:"access_token"`
+	AccessExpires  string `json:"access_expires"`
+	RefreshToken   string `json:"refresh_token,omitempty"`
+	RefreshExpires string `json:"refresh_expires,omitempty"`
+	Rotated        bool   `json:"rotated,omitempty"`
 }
 
 func channelFromWire(ch *rpc.ChannelSummary) ChannelSummary {

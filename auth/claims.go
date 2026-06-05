@@ -70,6 +70,18 @@ type Claims struct {
 	// list applies. A token carrying both Chs and Scopes is authorized
 	// for the union.
 	Scopes []Scope `json:"scopes,omitempty"`
+	// JTI is the per-token unique identifier. Present on refresh
+	// tokens minted by post-rotation Issuers; an empty JTI marks a
+	// legacy token that bypasses rotation (back-compat path). The
+	// rotation store tracks redeemed JTIs to detect refresh-token
+	// reuse, which triggers revocation of the entire family.
+	JTI string `json:"jti,omitempty"`
+	// FID is the rotation family ID — every refresh in a rotation
+	// chain shares it. When reuse of any one refresh is detected,
+	// the store marks the FID revoked so descendants and siblings
+	// are rejected even before their JTIs are looked up. Absent on
+	// legacy tokens (pre-rotation issuance).
+	FID string `json:"fid,omitempty"`
 }
 
 // IssuedAt returns Iat as a time.Time.

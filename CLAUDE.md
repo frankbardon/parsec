@@ -102,7 +102,7 @@ The `auth/` package mints three token types:
 | Type | TTL default | Purpose |
 |---|---|---|
 | `access` | 5m (clamped [1m, 1h]) | Connect over websocket + subscribe to listed private channels |
-| `refresh` | min(channel TTL, 1h) | Exchange at `RefreshToken` RPC for a new access |
+| `refresh` | min(channel TTL, 1h) | Exchange at `RefreshToken` RPC for a fresh access + fresh refresh (rotated per redemption; reuse triggers family revoke — see `docs/src/ops/refresh-rotation.md`) |
 | `mgmt` | 24h (clamped [1h, 7d]) | `Authorization: Bearer` on the management RPC |
 
 Tokens are compact JWTs whose JOSE header is **fixed per key** —
@@ -126,6 +126,15 @@ full procedure including break-glass.
 
 Reload: SIGHUP, `parsec keys reload`, or the mtime-poll watcher (5s
 default, configurable via `--keyring-poll`).
+
+Refresh-token rotation: every refresh carries a `jti` (per-token ID)
+and an `fid` (rotation-family ID). `RefreshToken` mints a fresh
+access + fresh refresh in the same family; the old `jti` is marked
+redeemed in a `RefreshStore` (memory single-node, Redis multi-node).
+A second redemption of the same `jti` is reuse — the entire family
+is revoked. Legacy refresh tokens without `jti` short-circuit to the
+old "mint access only" path. See
+[docs/src/ops/refresh-rotation.md](../docs/src/ops/refresh-rotation.md).
 
 `Manifest`, `RefreshToken` skip the bearer middleware. Every other RPC
 requires a valid `mgmt` token signed by a non-retired key.

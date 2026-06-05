@@ -89,10 +89,16 @@ func (a *RPCAdapter) RefreshToken(ctx context.Context, in *rpc.RefreshTokenReque
 	if err != nil {
 		return nil, toTwirpError(err)
 	}
-	return &rpc.RefreshTokenResponse{
+	out := &rpc.RefreshTokenResponse{
 		AccessToken:       res.AccessToken,
 		AccessExpiresUnix: res.AccessExpires.Unix(),
-	}, nil
+		Rotated:           res.Rotated,
+	}
+	if res.RefreshToken != "" {
+		out.RefreshToken = res.RefreshToken
+		out.RefreshExpiresUnix = res.RefreshExpires.Unix()
+	}
+	return out, nil
 }
 
 // ListChannels returns every managed channel.

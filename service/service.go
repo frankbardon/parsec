@@ -115,7 +115,7 @@ func (s *Service) RefreshAccess(ctx context.Context, refreshToken string) (parse
 	if err := s.gateTokenIssue(ctx); err != nil {
 		return parsec.RefreshResult{}, err
 	}
-	return s.p.RefreshAccess(refreshToken)
+	return s.p.RefreshAccessCtx(ctx, refreshToken)
 }
 
 // gateTokenIssue charges one event against the token-issue bucket keyed

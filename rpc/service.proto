@@ -141,10 +141,17 @@ message RefreshTokenRequest {
   string refresh_token = 1;
 }
 
-// RefreshTokenResponse carries the new access token + its expiry.
+// RefreshTokenResponse carries the new access token + its expiry. When
+// the redeemed refresh carried a rotation JTI the server also returns a
+// fresh refresh in the same family; legacy callers may ignore the
+// rotation fields, but a client that does ignore them will fail on the
+// next redemption because the JTI is now marked redeemed server-side.
 message RefreshTokenResponse {
   string access_token = 1;
   int64 access_expires_unix = 2;
+  string refresh_token = 3;
+  int64 refresh_expires_unix = 4;
+  bool rotated = 5;
 }
 
 // IssueMgmtRequest mints a new mgmt bearer signed by the currently active
