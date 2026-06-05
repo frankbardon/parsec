@@ -59,6 +59,7 @@
 - [Configuration File](ops/config.md)
 - [Key Rotation Runbook](ops/key-rotation.md)
 - [Refresh-Token Rotation](ops/refresh-rotation.md)
+- [Asymmetric Signing (RS256 / EdDSA)](ops/asymmetric-signing.md)
 - [OIDC Bridge](ops/oidc.md)
 - [Observability](ops/observability.md)
 - [Dead-Letter Queue](ops/dlq.md)

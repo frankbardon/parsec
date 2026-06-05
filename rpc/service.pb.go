@@ -988,6 +988,7 @@ type KeySummary struct {
 	Role          string                 `protobuf:"bytes,2,opt,name=role,proto3" json:"role,omitempty"`                            // active | verify-only | retired
 	CreatedAt     string                 `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // RFC3339
 	RetiredAt     string                 `protobuf:"bytes,4,opt,name=retired_at,json=retiredAt,proto3" json:"retired_at,omitempty"` // RFC3339, empty when not retired
+	Alg           string                 `protobuf:"bytes,5,opt,name=alg,proto3" json:"alg,omitempty"`                              // HS256 (default) | RS256 | EdDSA
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1050,6 +1051,58 @@ func (x *KeySummary) GetRetiredAt() string {
 	return ""
 }
 
+func (x *KeySummary) GetAlg() string {
+	if x != nil {
+		return x.Alg
+	}
+	return ""
+}
+
+// GenerateKeyRequest selects the algorithm for the new key.
+type GenerateKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Alg           string                 `protobuf:"bytes,1,opt,name=alg,proto3" json:"alg,omitempty"` // HS256 (default) | RS256 | EdDSA
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GenerateKeyRequest) Reset() {
+	*x = GenerateKeyRequest{}
+	mi := &file_service_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GenerateKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GenerateKeyRequest) ProtoMessage() {}
+
+func (x *GenerateKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_service_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GenerateKeyRequest.ProtoReflect.Descriptor instead.
+func (*GenerateKeyRequest) Descriptor() ([]byte, []int) {
+	return file_service_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *GenerateKeyRequest) GetAlg() string {
+	if x != nil {
+		return x.Alg
+	}
+	return ""
+}
+
 // ListKeysResponse is the bulk listing for the ring.
 type ListKeysResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1061,7 +1114,7 @@ type ListKeysResponse struct {
 
 func (x *ListKeysResponse) Reset() {
 	*x = ListKeysResponse{}
-	mi := &file_service_proto_msgTypes[18]
+	mi := &file_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1073,7 +1126,7 @@ func (x *ListKeysResponse) String() string {
 func (*ListKeysResponse) ProtoMessage() {}
 
 func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[18]
+	mi := &file_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1086,7 +1139,7 @@ func (x *ListKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListKeysResponse.ProtoReflect.Descriptor instead.
 func (*ListKeysResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{18}
+	return file_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListKeysResponse) GetActiveKeyId() string {
@@ -1113,7 +1166,7 @@ type KeyRef struct {
 
 func (x *KeyRef) Reset() {
 	*x = KeyRef{}
-	mi := &file_service_proto_msgTypes[19]
+	mi := &file_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1125,7 +1178,7 @@ func (x *KeyRef) String() string {
 func (*KeyRef) ProtoMessage() {}
 
 func (x *KeyRef) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[19]
+	mi := &file_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1138,7 +1191,7 @@ func (x *KeyRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyRef.ProtoReflect.Descriptor instead.
 func (*KeyRef) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{19}
+	return file_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *KeyRef) GetId() string {
@@ -1168,7 +1221,7 @@ type DlqItem struct {
 
 func (x *DlqItem) Reset() {
 	*x = DlqItem{}
-	mi := &file_service_proto_msgTypes[20]
+	mi := &file_service_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1180,7 +1233,7 @@ func (x *DlqItem) String() string {
 func (*DlqItem) ProtoMessage() {}
 
 func (x *DlqItem) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[20]
+	mi := &file_service_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1193,7 +1246,7 @@ func (x *DlqItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DlqItem.ProtoReflect.Descriptor instead.
 func (*DlqItem) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{20}
+	return file_service_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *DlqItem) GetId() string {
@@ -1269,7 +1322,7 @@ type DlqListRequest struct {
 
 func (x *DlqListRequest) Reset() {
 	*x = DlqListRequest{}
-	mi := &file_service_proto_msgTypes[21]
+	mi := &file_service_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1281,7 +1334,7 @@ func (x *DlqListRequest) String() string {
 func (*DlqListRequest) ProtoMessage() {}
 
 func (x *DlqListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[21]
+	mi := &file_service_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1294,7 +1347,7 @@ func (x *DlqListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DlqListRequest.ProtoReflect.Descriptor instead.
 func (*DlqListRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{21}
+	return file_service_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *DlqListRequest) GetSink() string {
@@ -1320,7 +1373,7 @@ type DlqListResponse struct {
 
 func (x *DlqListResponse) Reset() {
 	*x = DlqListResponse{}
-	mi := &file_service_proto_msgTypes[22]
+	mi := &file_service_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1332,7 +1385,7 @@ func (x *DlqListResponse) String() string {
 func (*DlqListResponse) ProtoMessage() {}
 
 func (x *DlqListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[22]
+	mi := &file_service_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1345,7 +1398,7 @@ func (x *DlqListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DlqListResponse.ProtoReflect.Descriptor instead.
 func (*DlqListResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{22}
+	return file_service_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *DlqListResponse) GetItems() []*DlqItem {
@@ -1364,7 +1417,7 @@ type DlqCountRequest struct {
 
 func (x *DlqCountRequest) Reset() {
 	*x = DlqCountRequest{}
-	mi := &file_service_proto_msgTypes[23]
+	mi := &file_service_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1376,7 +1429,7 @@ func (x *DlqCountRequest) String() string {
 func (*DlqCountRequest) ProtoMessage() {}
 
 func (x *DlqCountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[23]
+	mi := &file_service_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1389,7 +1442,7 @@ func (x *DlqCountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DlqCountRequest.ProtoReflect.Descriptor instead.
 func (*DlqCountRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{23}
+	return file_service_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *DlqCountRequest) GetSink() string {
@@ -1408,7 +1461,7 @@ type DlqCountResponse struct {
 
 func (x *DlqCountResponse) Reset() {
 	*x = DlqCountResponse{}
-	mi := &file_service_proto_msgTypes[24]
+	mi := &file_service_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1420,7 +1473,7 @@ func (x *DlqCountResponse) String() string {
 func (*DlqCountResponse) ProtoMessage() {}
 
 func (x *DlqCountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[24]
+	mi := &file_service_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1433,7 +1486,7 @@ func (x *DlqCountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DlqCountResponse.ProtoReflect.Descriptor instead.
 func (*DlqCountResponse) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{24}
+	return file_service_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DlqCountResponse) GetCount() int32 {
@@ -1452,7 +1505,7 @@ type DlqDiscardRequest struct {
 
 func (x *DlqDiscardRequest) Reset() {
 	*x = DlqDiscardRequest{}
-	mi := &file_service_proto_msgTypes[25]
+	mi := &file_service_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1464,7 +1517,7 @@ func (x *DlqDiscardRequest) String() string {
 func (*DlqDiscardRequest) ProtoMessage() {}
 
 func (x *DlqDiscardRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[25]
+	mi := &file_service_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1477,7 +1530,7 @@ func (x *DlqDiscardRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DlqDiscardRequest.ProtoReflect.Descriptor instead.
 func (*DlqDiscardRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{25}
+	return file_service_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DlqDiscardRequest) GetId() string {
@@ -1496,7 +1549,7 @@ type DlqReplayRequest struct {
 
 func (x *DlqReplayRequest) Reset() {
 	*x = DlqReplayRequest{}
-	mi := &file_service_proto_msgTypes[26]
+	mi := &file_service_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1508,7 +1561,7 @@ func (x *DlqReplayRequest) String() string {
 func (*DlqReplayRequest) ProtoMessage() {}
 
 func (x *DlqReplayRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_service_proto_msgTypes[26]
+	mi := &file_service_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1521,7 +1574,7 @@ func (x *DlqReplayRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DlqReplayRequest.ProtoReflect.Descriptor instead.
 func (*DlqReplayRequest) Descriptor() ([]byte, []int) {
-	return file_service_proto_rawDescGZIP(), []int{26}
+	return file_service_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *DlqReplayRequest) GetId() string {
@@ -1599,7 +1652,7 @@ const file_service_proto_rawDesc = "" +
 	"\n" +
 	"mgmt_token\x18\x01 \x01(\tR\tmgmtToken\x12!\n" +
 	"\fexpires_unix\x18\x02 \x01(\x03R\vexpiresUnix\x12'\n" +
-	"\x10signed_by_key_id\x18\x03 \x01(\tR\rsignedByKeyId\"n\n" +
+	"\x10signed_by_key_id\x18\x03 \x01(\tR\rsignedByKeyId\"\x80\x01\n" +
 	"\n" +
 	"KeySummary\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -1607,7 +1660,10 @@ const file_service_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x03 \x01(\tR\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"retired_at\x18\x04 \x01(\tR\tretiredAt\"^\n" +
+	"retired_at\x18\x04 \x01(\tR\tretiredAt\x12\x10\n" +
+	"\x03alg\x18\x05 \x01(\tR\x03alg\"&\n" +
+	"\x12GenerateKeyRequest\x12\x10\n" +
+	"\x03alg\x18\x01 \x01(\tR\x03alg\"^\n" +
 	"\x10ListKeysResponse\x12\"\n" +
 	"\ractive_key_id\x18\x01 \x01(\tR\vactiveKeyId\x12&\n" +
 	"\x04keys\x18\x02 \x03(\v2\x12.parsec.KeySummaryR\x04keys\"\x18\n" +
@@ -1639,7 +1695,7 @@ const file_service_proto_rawDesc = "" +
 	"\x11DlqDiscardRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\"\n" +
 	"\x10DlqReplayRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id2\xca\b\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id2\xd7\b\n" +
 	"\rParsecService\x12/\n" +
 	"\bManifest\x12\r.parsec.Empty\x1a\x14.parsec.JSONResponse\x12@\n" +
 	"\n" +
@@ -1653,8 +1709,8 @@ const file_service_proto_rawDesc = "" +
 	"\bPresence\x12\x12.parsec.ChannelRef\x1a\x18.parsec.PresenceResponse\x12I\n" +
 	"\fRefreshToken\x12\x1b.parsec.RefreshTokenRequest\x1a\x1c.parsec.RefreshTokenResponse\x12@\n" +
 	"\tIssueMgmt\x12\x18.parsec.IssueMgmtRequest\x1a\x19.parsec.IssueMgmtResponse\x123\n" +
-	"\bListKeys\x12\r.parsec.Empty\x1a\x18.parsec.ListKeysResponse\x120\n" +
-	"\vGenerateKey\x12\r.parsec.Empty\x1a\x12.parsec.KeySummary\x12+\n" +
+	"\bListKeys\x12\r.parsec.Empty\x1a\x18.parsec.ListKeysResponse\x12=\n" +
+	"\vGenerateKey\x12\x1a.parsec.GenerateKeyRequest\x1a\x12.parsec.KeySummary\x12+\n" +
 	"\n" +
 	"PromoteKey\x12\x0e.parsec.KeyRef\x1a\r.parsec.Empty\x12*\n" +
 	"\tRetireKey\x12\x0e.parsec.KeyRef\x1a\r.parsec.Empty\x12*\n" +
@@ -1678,7 +1734,7 @@ func file_service_proto_rawDescGZIP() []byte {
 	return file_service_proto_rawDescData
 }
 
-var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
+var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_service_proto_goTypes = []any{
 	(*Empty)(nil),                // 0: parsec.Empty
 	(*JSONResponse)(nil),         // 1: parsec.JSONResponse
@@ -1698,24 +1754,25 @@ var file_service_proto_goTypes = []any{
 	(*IssueMgmtRequest)(nil),     // 15: parsec.IssueMgmtRequest
 	(*IssueMgmtResponse)(nil),    // 16: parsec.IssueMgmtResponse
 	(*KeySummary)(nil),           // 17: parsec.KeySummary
-	(*ListKeysResponse)(nil),     // 18: parsec.ListKeysResponse
-	(*KeyRef)(nil),               // 19: parsec.KeyRef
-	(*DlqItem)(nil),              // 20: parsec.DlqItem
-	(*DlqListRequest)(nil),       // 21: parsec.DlqListRequest
-	(*DlqListResponse)(nil),      // 22: parsec.DlqListResponse
-	(*DlqCountRequest)(nil),      // 23: parsec.DlqCountRequest
-	(*DlqCountResponse)(nil),     // 24: parsec.DlqCountResponse
-	(*DlqDiscardRequest)(nil),    // 25: parsec.DlqDiscardRequest
-	(*DlqReplayRequest)(nil),     // 26: parsec.DlqReplayRequest
-	nil,                          // 27: parsec.DlqItem.MetadataEntry
+	(*GenerateKeyRequest)(nil),   // 18: parsec.GenerateKeyRequest
+	(*ListKeysResponse)(nil),     // 19: parsec.ListKeysResponse
+	(*KeyRef)(nil),               // 20: parsec.KeyRef
+	(*DlqItem)(nil),              // 21: parsec.DlqItem
+	(*DlqListRequest)(nil),       // 22: parsec.DlqListRequest
+	(*DlqListResponse)(nil),      // 23: parsec.DlqListResponse
+	(*DlqCountRequest)(nil),      // 24: parsec.DlqCountRequest
+	(*DlqCountResponse)(nil),     // 25: parsec.DlqCountResponse
+	(*DlqDiscardRequest)(nil),    // 26: parsec.DlqDiscardRequest
+	(*DlqReplayRequest)(nil),     // 27: parsec.DlqReplayRequest
+	nil,                          // 28: parsec.DlqItem.MetadataEntry
 }
 var file_service_proto_depIdxs = []int32{
 	4,  // 0: parsec.CreatePrivateRequest.scopes:type_name -> parsec.Scope
 	6,  // 1: parsec.ChannelResponse.channel:type_name -> parsec.ChannelSummary
 	6,  // 2: parsec.ListChannelsResponse.channels:type_name -> parsec.ChannelSummary
 	17, // 3: parsec.ListKeysResponse.keys:type_name -> parsec.KeySummary
-	27, // 4: parsec.DlqItem.metadata:type_name -> parsec.DlqItem.MetadataEntry
-	20, // 5: parsec.DlqListResponse.items:type_name -> parsec.DlqItem
+	28, // 4: parsec.DlqItem.metadata:type_name -> parsec.DlqItem.MetadataEntry
+	21, // 5: parsec.DlqListResponse.items:type_name -> parsec.DlqItem
 	0,  // 6: parsec.ParsecService.Manifest:input_type -> parsec.Empty
 	2,  // 7: parsec.ParsecService.OpenPublic:input_type -> parsec.OpenPublicRequest
 	3,  // 8: parsec.ParsecService.CreatePrivate:input_type -> parsec.CreatePrivateRequest
@@ -1727,14 +1784,14 @@ var file_service_proto_depIdxs = []int32{
 	13, // 14: parsec.ParsecService.RefreshToken:input_type -> parsec.RefreshTokenRequest
 	15, // 15: parsec.ParsecService.IssueMgmt:input_type -> parsec.IssueMgmtRequest
 	0,  // 16: parsec.ParsecService.ListKeys:input_type -> parsec.Empty
-	0,  // 17: parsec.ParsecService.GenerateKey:input_type -> parsec.Empty
-	19, // 18: parsec.ParsecService.PromoteKey:input_type -> parsec.KeyRef
-	19, // 19: parsec.ParsecService.RetireKey:input_type -> parsec.KeyRef
+	18, // 17: parsec.ParsecService.GenerateKey:input_type -> parsec.GenerateKeyRequest
+	20, // 18: parsec.ParsecService.PromoteKey:input_type -> parsec.KeyRef
+	20, // 19: parsec.ParsecService.RetireKey:input_type -> parsec.KeyRef
 	0,  // 20: parsec.ParsecService.ReloadKeys:input_type -> parsec.Empty
-	21, // 21: parsec.ParsecService.DlqList:input_type -> parsec.DlqListRequest
-	23, // 22: parsec.ParsecService.DlqCount:input_type -> parsec.DlqCountRequest
-	25, // 23: parsec.ParsecService.DlqDiscard:input_type -> parsec.DlqDiscardRequest
-	26, // 24: parsec.ParsecService.DlqReplay:input_type -> parsec.DlqReplayRequest
+	22, // 21: parsec.ParsecService.DlqList:input_type -> parsec.DlqListRequest
+	24, // 22: parsec.ParsecService.DlqCount:input_type -> parsec.DlqCountRequest
+	26, // 23: parsec.ParsecService.DlqDiscard:input_type -> parsec.DlqDiscardRequest
+	27, // 24: parsec.ParsecService.DlqReplay:input_type -> parsec.DlqReplayRequest
 	1,  // 25: parsec.ParsecService.Manifest:output_type -> parsec.JSONResponse
 	7,  // 26: parsec.ParsecService.OpenPublic:output_type -> parsec.ChannelResponse
 	9,  // 27: parsec.ParsecService.CreatePrivate:output_type -> parsec.Credentials
@@ -1745,13 +1802,13 @@ var file_service_proto_depIdxs = []int32{
 	12, // 32: parsec.ParsecService.Presence:output_type -> parsec.PresenceResponse
 	14, // 33: parsec.ParsecService.RefreshToken:output_type -> parsec.RefreshTokenResponse
 	16, // 34: parsec.ParsecService.IssueMgmt:output_type -> parsec.IssueMgmtResponse
-	18, // 35: parsec.ParsecService.ListKeys:output_type -> parsec.ListKeysResponse
+	19, // 35: parsec.ParsecService.ListKeys:output_type -> parsec.ListKeysResponse
 	17, // 36: parsec.ParsecService.GenerateKey:output_type -> parsec.KeySummary
 	0,  // 37: parsec.ParsecService.PromoteKey:output_type -> parsec.Empty
 	0,  // 38: parsec.ParsecService.RetireKey:output_type -> parsec.Empty
 	0,  // 39: parsec.ParsecService.ReloadKeys:output_type -> parsec.Empty
-	22, // 40: parsec.ParsecService.DlqList:output_type -> parsec.DlqListResponse
-	24, // 41: parsec.ParsecService.DlqCount:output_type -> parsec.DlqCountResponse
+	23, // 40: parsec.ParsecService.DlqList:output_type -> parsec.DlqListResponse
+	25, // 41: parsec.ParsecService.DlqCount:output_type -> parsec.DlqCountResponse
 	0,  // 42: parsec.ParsecService.DlqDiscard:output_type -> parsec.Empty
 	0,  // 43: parsec.ParsecService.DlqReplay:output_type -> parsec.Empty
 	25, // [25:44] is the sub-list for method output_type
@@ -1772,7 +1829,7 @@ func file_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   28,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

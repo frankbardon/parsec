@@ -105,6 +105,10 @@ func New(p *parsec.Parsec, svc *service.Service, logger *slog.Logger, validate B
 		mux.Handle("/parsec/schemas/", h)
 		logger.Info("schema registry mounted", "path", "/parsec/schemas")
 	}
+	if h := p.JWKSHandler(); h != nil {
+		mux.Handle("/parsec/jwks.json", h)
+		logger.Info("jwks mounted", "path", "/parsec/jwks.json")
+	}
 	if h := p.TokenBrokerHandler(); h != nil {
 		mux.Handle("/parsec/", http.StripPrefix("/parsec", h))
 		logger.Info("token broker mounted", "prefix", "/parsec")

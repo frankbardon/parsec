@@ -217,6 +217,13 @@ type Options struct {
 	// without parsec.go importing the schema package itself.
 	SchemaHandler http.Handler
 
+	// JWKSHandler, when non-nil, is mounted at /parsec/jwks.json. The
+	// handler is expected to serve the active KeyRing's asymmetric
+	// public keys as an RFC 7517 JWKS document. Embedders that only
+	// use HMAC signing should leave this nil — there is nothing to
+	// publish, and the 404 prevents probing.
+	JWKSHandler http.Handler
+
 	// TokenBrokerHandler, when non-nil, is mounted under /parsec
 	// (/parsec/token, /parsec/token/delegate, /parsec/revoke). The
 	// embedder constructs a tokenbroker.Broker, configures its
@@ -441,7 +448,30 @@ func New(opts Options) (*Parsec, error) {
 	// Replace the user-supplied registry pointer with the wrapped one so
 	// PublishOrSink and Sinks() see the retry-aware shape.
 	p.opts.Sinks = wrapped
+	// Auto-wire JWKS when the ring carries any asymmetric key and the
+	// embedder did not supply a handler. Symmetric-only deployments
+	// see no JWKS surface at all.
+	if p.opts.JWKSHandler == nil && ringHasAsymmetric(p.ring) {
+		p.opts.JWKSHandler = auth.JWKSHandler(p.ring)
+	}
 	return p, nil
+}
+
+// ringHasAsymmetric reports whether ring carries any non-retired
+// asymmetric key. Used to decide whether to expose /parsec/jwks.json.
+func ringHasAsymmetric(ring *auth.KeyRing) bool {
+	if ring == nil {
+		return false
+	}
+	for _, k := range ring.List() {
+		if k.Role == auth.RoleRetired {
+			continue
+		}
+		if k.Alg.IsAsymmetric() {
+			return true
+		}
+	}
+	return false
 }
 
 // buildRefreshStore resolves the refresh-rotation store. Explicit
@@ -891,6 +921,13 @@ func (p *Parsec) Sinks() *sinks.Registry { return p.opts.Sinks }
 // or nil when no schema registry was wired.
 func (p *Parsec) SchemaHandler() http.Handler { return p.opts.SchemaHandler }
 
+// JWKSHandler returns the optional JWKS handler mounted at
+// /parsec/jwks.json. Convenience: when Options.JWKSHandler is nil and
+// the live ring carries at least one asymmetric key, parsec.New
+// auto-wires auth.JWKSHandler against the ring — operators who add
+// an Ed25519 key get a JWKS endpoint for free.
+func (p *Parsec) JWKSHandler() http.Handler { return p.opts.JWKSHandler }
+
 // TokenBrokerHandler returns the optional handler mounted under /parsec
 // (token, token/delegate, revoke), or nil when no broker was wired.
 func (p *Parsec) TokenBrokerHandler() http.Handler { return p.opts.TokenBrokerHandler }
@@ -1054,15 +1091,26 @@ func (p *Parsec) persistKeyRing() error {
 	return p.keyringStore.Save(ctx, p.ring)
 }
 
-// GenerateKey mints a new key (joins the ring as verify-only) and
+// GenerateKey mints a new HS256 key (joins the ring as verify-only) and
 // persists if StateDir is configured.
 func (p *Parsec) GenerateKey() (auth.Key, error) {
-	k, err := p.ring.Generate()
+	return p.GenerateKeyAlg(auth.AlgHS256)
+}
+
+// GenerateKeyAlg mints a new key of the requested algorithm. After
+// generation: if the freshly-added key is asymmetric and the embedder
+// did not wire an explicit JWKSHandler, parsec auto-installs one so
+// the next /parsec/jwks.json hit picks the new public material up.
+func (p *Parsec) GenerateKeyAlg(alg auth.Alg) (auth.Key, error) {
+	k, err := p.ring.GenerateAlg(alg)
 	if err != nil {
-		return auth.Key{}, perr.Wrap(perr.Internal, "generate key", err)
+		return auth.Key{}, perr.Wrap(perr.InvalidArgument, "generate key", err)
 	}
 	if err := p.persistKeyRing(); err != nil {
 		return auth.Key{}, perr.Wrap(perr.Internal, "persist keyring", err)
+	}
+	if p.opts.JWKSHandler == nil && k.Alg.IsAsymmetric() {
+		p.opts.JWKSHandler = auth.JWKSHandler(p.ring)
 	}
 	p.metrics.KeyRotationsTotal.WithLabelValues(metrics.KeyActionGenerated).Inc()
 	return k, nil

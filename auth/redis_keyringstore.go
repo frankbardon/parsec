@@ -56,7 +56,7 @@ func (s *RedisKeyRingStore) Load(ctx context.Context) (*KeyRing, error) {
 	if err := json.Unmarshal([]byte(body), &snap); err != nil {
 		return nil, fmt.Errorf("decode keyring: %w", err)
 	}
-	if snap.FormatVersion != "" && snap.FormatVersion != "1" {
+	if !supportedFormatVersion(snap.FormatVersion) {
 		return nil, fmt.Errorf("keyring format_version %q is not supported", snap.FormatVersion)
 	}
 	r := NewKeyRing()
@@ -72,7 +72,7 @@ func (s *RedisKeyRingStore) Load(ctx context.Context) (*KeyRing, error) {
 // pub/sub channel so other nodes can react.
 func (s *RedisKeyRingStore) Save(ctx context.Context, r *KeyRing) error {
 	snap := r.Snapshot()
-	snap.FormatVersion = "1"
+	snap.FormatVersion = keyringFormatVersion
 	body, err := json.Marshal(snap)
 	if err != nil {
 		return err

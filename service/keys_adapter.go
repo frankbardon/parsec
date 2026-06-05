@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/frankbardon/parsec/auth"
 	"github.com/frankbardon/parsec/rpc"
 )
 
@@ -14,6 +15,7 @@ func (a *RPCAdapter) ListKeys(ctx context.Context, _ *rpc.Empty) (*rpc.ListKeysR
 	for _, k := range listing.Keys {
 		out.Keys = append(out.Keys, &rpc.KeySummary{
 			Id:        k.ID,
+			Alg:       k.Alg,
 			Role:      k.Role,
 			CreatedAt: k.CreatedAt,
 			RetiredAt: k.RetiredAt,
@@ -22,13 +24,14 @@ func (a *RPCAdapter) ListKeys(ctx context.Context, _ *rpc.Empty) (*rpc.ListKeysR
 	return out, nil
 }
 
-// GenerateKey mints a fresh key (verify-only).
-func (a *RPCAdapter) GenerateKey(ctx context.Context, _ *rpc.Empty) (*rpc.KeySummary, error) {
-	k, err := a.S.GenerateKey(ctx)
+// GenerateKey mints a fresh key (verify-only). Algorithm is selected
+// via the request's Alg field; empty defaults to HS256.
+func (a *RPCAdapter) GenerateKey(ctx context.Context, in *rpc.GenerateKeyRequest) (*rpc.KeySummary, error) {
+	k, err := a.S.GenerateKey(ctx, auth.Alg(in.GetAlg()))
 	if err != nil {
 		return nil, toTwirpError(err)
 	}
-	return &rpc.KeySummary{Id: k.ID, Role: k.Role, CreatedAt: k.CreatedAt, RetiredAt: k.RetiredAt}, nil
+	return &rpc.KeySummary{Id: k.ID, Alg: k.Alg, Role: k.Role, CreatedAt: k.CreatedAt, RetiredAt: k.RetiredAt}, nil
 }
 
 // PromoteKey transitions id to active.

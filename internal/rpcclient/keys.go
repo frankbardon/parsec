@@ -16,6 +16,7 @@ type KeysListing struct {
 // KeySummary is the CLI-shaped ring key snapshot.
 type KeySummary struct {
 	ID        string `json:"id"`
+	Alg       string `json:"alg,omitempty"`
 	Role      string `json:"role"`
 	CreatedAt string `json:"created_at"`
 	RetiredAt string `json:"retired_at,omitempty"`
@@ -41,9 +42,10 @@ func (c *Client) ListKeys(ctx context.Context) (KeysListing, error) {
 	return out, nil
 }
 
-// GenerateKey mints a new key (verify-only).
-func (c *Client) GenerateKey(ctx context.Context) (KeySummary, error) {
-	res, err := c.rpc.GenerateKey(ctx, &rpc.Empty{})
+// GenerateKey mints a new key (verify-only). alg selects the
+// algorithm; empty string defaults to HS256 server-side.
+func (c *Client) GenerateKey(ctx context.Context, alg string) (KeySummary, error) {
+	res, err := c.rpc.GenerateKey(ctx, &rpc.GenerateKeyRequest{Alg: alg})
 	if err != nil {
 		return KeySummary{}, mapErr(err)
 	}
@@ -87,6 +89,7 @@ func keyFromWire(k *rpc.KeySummary) KeySummary {
 	}
 	return KeySummary{
 		ID:        k.GetId(),
+		Alg:       k.GetAlg(),
 		Role:      k.GetRole(),
 		CreatedAt: k.GetCreatedAt(),
 		RetiredAt: k.GetRetiredAt(),

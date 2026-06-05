@@ -10,6 +10,7 @@ import (
 // KeySummary is the surface-shape of an auth.Key.
 type KeySummary struct {
 	ID        string `json:"id"`
+	Alg       string `json:"alg,omitempty"`
 	Role      string `json:"role"`
 	CreatedAt string `json:"created_at"`
 	RetiredAt string `json:"retired_at,omitempty"`
@@ -32,8 +33,9 @@ func (s *Service) ListKeys(ctx context.Context) KeyListing {
 }
 
 // GenerateKey adds a new key to the ring as verify-only and returns it.
-func (s *Service) GenerateKey(ctx context.Context) (KeySummary, error) {
-	k, err := s.p.GenerateKey()
+// The alg argument selects HS256 (default), RS256, or EdDSA.
+func (s *Service) GenerateKey(ctx context.Context, alg auth.Alg) (KeySummary, error) {
+	k, err := s.p.GenerateKeyAlg(alg)
 	if err != nil {
 		return KeySummary{}, err
 	}
@@ -79,8 +81,13 @@ func (s *Service) IssueMgmt(ctx context.Context, subject string, ttl time.Durati
 }
 
 func keyToSummary(k auth.Key) KeySummary {
+	alg := string(k.Alg)
+	if alg == "" {
+		alg = string(auth.AlgHS256)
+	}
 	out := KeySummary{
 		ID:        k.ID,
+		Alg:       alg,
 		Role:      string(k.Role),
 		CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}

@@ -65,15 +65,37 @@ func keysListCommand() *ucli.Command {
 func keysGenerateCommand() *ucli.Command {
 	return &ucli.Command{
 		Name:  "generate",
-		Usage: "Generate a new HMAC key (joins as verify-only)",
+		Usage: "Generate a new signing key (joins as verify-only)",
+		Flags: []ucli.Flag{
+			&ucli.StringFlag{
+				Name:  "alg",
+				Value: "hs256",
+				Usage: "Signing algorithm: hs256 (default), rs256, eddsa",
+			},
+		},
 		Action: func(ctx context.Context, cmd *ucli.Command) error {
 			c := rpcclient.New(cmd.String("server"), cmd.String("token"))
-			res, err := c.GenerateKey(ctx)
+			res, err := c.GenerateKey(ctx, normalizeAlg(cmd.String("alg")))
 			if err != nil {
 				return err
 			}
 			return descriptor.WriteEnvelope(cmd.Writer, descriptor.NewEnvelope("parsec.key.generated", res))
 		},
+	}
+}
+
+// normalizeAlg translates the CLI's lowercase friendly form into the
+// canonical wire form expected by the server.
+func normalizeAlg(s string) string {
+	switch strings.ToLower(s) {
+	case "", "hs256":
+		return "HS256"
+	case "rs256":
+		return "RS256"
+	case "eddsa", "ed25519":
+		return "EdDSA"
+	default:
+		return s
 	}
 }
 

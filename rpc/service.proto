@@ -32,7 +32,7 @@ service ParsecService {
 
   // Key ring management.
   rpc ListKeys(Empty) returns (ListKeysResponse);
-  rpc GenerateKey(Empty) returns (KeySummary);
+  rpc GenerateKey(GenerateKeyRequest) returns (KeySummary);
   rpc PromoteKey(KeyRef) returns (Empty);
   rpc RetireKey(KeyRef) returns (Empty);
   rpc ReloadKeys(Empty) returns (Empty);
@@ -175,6 +175,12 @@ message KeySummary {
   string role = 2;       // active | verify-only | retired
   string created_at = 3; // RFC3339
   string retired_at = 4; // RFC3339, empty when not retired
+  string alg = 5;        // HS256 (default) | RS256 | EdDSA
+}
+
+// GenerateKeyRequest selects the algorithm for the new key.
+message GenerateKeyRequest {
+  string alg = 1; // HS256 (default) | RS256 | EdDSA
 }
 
 // ListKeysResponse is the bulk listing for the ring.

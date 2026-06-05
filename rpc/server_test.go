@@ -65,7 +65,7 @@ func (f *fakeService) Presence(_ context.Context, _ *rpc.ChannelRef) (*rpc.Prese
 func (f *fakeService) ListKeys(_ context.Context, _ *rpc.Empty) (*rpc.ListKeysResponse, error) {
 	return &rpc.ListKeysResponse{ActiveKeyId: "k-test"}, nil
 }
-func (f *fakeService) GenerateKey(_ context.Context, _ *rpc.Empty) (*rpc.KeySummary, error) {
+func (f *fakeService) GenerateKey(_ context.Context, _ *rpc.GenerateKeyRequest) (*rpc.KeySummary, error) {
 	return &rpc.KeySummary{Id: "k-new", Role: "verify-only"}, nil
 }
 func (f *fakeService) PromoteKey(_ context.Context, _ *rpc.KeyRef) (*rpc.Empty, error) {
