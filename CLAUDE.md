@@ -25,9 +25,11 @@ rpc/                   # Twirp JSON wire — generated from rpc/service.proto (p
 descriptor/            # manifest envelope
 errors/                # coded errors (PARSEC_*)
 internal/cli/          # CLI command bodies
+internal/codegen/      # parsec-gen Go + TS emitters (driven from schema registry)
 internal/server/       # HTTP mux (twirp + websocket + sse + healthz)
 internal/rpcclient/    # CLI adapter onto the generated Twirp JSON client
 cmd/parsec/            # main.go assembler
+cmd/parsec-gen/        # codegen binary; reads schema registry, emits Go/TS bindings
 docs/                  # mdBook source
 ```
 
