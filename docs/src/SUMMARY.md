@@ -35,6 +35,7 @@
 - [parsec.New & Options](library/options.md)
 - [Custom Sinks](library/sinks.md)
 - [Testing with parsectest](library/testing.md)
+- [Schema Registry Broadcast](library/schema-broadcast.md)
 
 # RPC Surface
 
