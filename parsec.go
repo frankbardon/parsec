@@ -43,6 +43,7 @@ import (
 	"github.com/frankbardon/parsec/internal/tracing"
 	"github.com/frankbardon/parsec/ratelimit"
 	"github.com/frankbardon/parsec/sinks"
+	"github.com/frankbardon/parsec/tokenbroker"
 )
 
 // Options configures a Parsec instance. All fields are optional.
@@ -240,6 +241,14 @@ type Options struct {
 	// Authenticator / Authorizer, and passes Broker.Handler() here.
 	TokenBrokerHandler http.Handler
 
+	// RevocationStore, when non-nil, is consulted on every private
+	// channel subscribe attempt. The subscribe authorizer checks the
+	// access token's JTI and the user's blanket revoke timestamp; a
+	// match denies the subscribe with PARSEC_AUTH_DENIED. Pair this
+	// with a tokenbroker.Broker so revoke RPCs from operators land
+	// somewhere both the broker and the subscribe path can read.
+	RevocationStore tokenbroker.RevocationStore
+
 	// TelemetryHandler, when non-nil, is mounted at /parsec/metrics
 	// and serves the aggregated JSON snapshot. The native /metrics
 	// Prometheus endpoint is unaffected.
@@ -361,11 +370,43 @@ func New(opts Options) (*Parsec, error) {
 	manager := buildManager(opts, logger)
 	if opts.BrokerOptions.SubscribeAuthorizer == nil {
 		tokenAuth := auth.NewSubscribeAuthorizerWithLimiter(verifier, limiter, rl.Subscribe)
+		revStore := opts.RevocationStore
 		opts.BrokerOptions.SubscribeAuthorizer = func(ctx context.Context, userID string, ch channels.Name, event centrifuge.SubscribeEvent) error {
 			if !manager.IsOpen(ch) {
 				return perr.New(perr.ChannelClosed, "channel not open")
 			}
-			return tokenAuth(ctx, userID, ch, event)
+			if err := tokenAuth(ctx, userID, ch, event); err != nil {
+				return err
+			}
+			if revStore == nil || !ch.IsPrivate() || event.Token == "" {
+				return nil
+			}
+			claims, err := verifier.Verify(event.Token, auth.TypeAccess)
+			if err != nil {
+				// tokenAuth already validated; a re-verify failure here
+				// is a transient race we don't want to silently allow.
+				return auth.MapErr(err)
+			}
+			if claims.JTI != "" {
+				revoked, err := revStore.IsRevoked(ctx, claims.JTI)
+				if err != nil {
+					return perr.Wrap(perr.Internal, "revocation check error", err)
+				}
+				if revoked {
+					return perr.New(perr.AuthDenied, "token has been revoked")
+				}
+			}
+			if claims.Sub != "" {
+				issuedAt := time.Unix(claims.Iat, 0).UTC()
+				urev, err := revStore.IsUserRevoked(ctx, claims.Sub, issuedAt)
+				if err != nil {
+					return perr.Wrap(perr.Internal, "revocation check error", err)
+				}
+				if urev {
+					return perr.New(perr.AuthDenied, "user tokens have been revoked")
+				}
+			}
+			return nil
 		}
 	}
 	m := metrics.NewWithRegistryAndRegion(opts.MetricsRegistry, opts.Region)
@@ -1006,6 +1047,11 @@ func (p *Parsec) JWKSHandler() http.Handler { return p.opts.JWKSHandler }
 // TokenBrokerHandler returns the optional handler mounted under /parsec
 // (token, token/delegate, revoke), or nil when no broker was wired.
 func (p *Parsec) TokenBrokerHandler() http.Handler { return p.opts.TokenBrokerHandler }
+
+// RevocationStore returns the optional revocation store the subscribe
+// authorizer consults on every private channel subscribe. Used by the
+// manifest layer to surface the on/off state to operators.
+func (p *Parsec) RevocationStore() tokenbroker.RevocationStore { return p.opts.RevocationStore }
 
 // TelemetryHandler returns the optional aggregated /parsec/metrics
 // handler, or nil when telemetry aggregation is not wired.

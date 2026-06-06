@@ -199,6 +199,59 @@ func TestBrokerHTTP(t *testing.T) {
 	}
 }
 
+func TestMemoryRevocationsExpiresAndPrunes(t *testing.T) {
+	now := time.Now()
+	clock := now
+	rev := NewMemoryRevocations().WithMaxTTL(time.Minute)
+	rev.SetClock(func() time.Time { return clock })
+
+	if err := rev.Revoke(context.Background(), "tok-fresh", "u-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := rev.RevokeAllForUser(context.Background(), "u-2"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Right after revoke — still revoked.
+	yes, _ := rev.IsRevoked(context.Background(), "tok-fresh")
+	if !yes {
+		t.Fatal("expected fresh revoke to be honored")
+	}
+	yes, _ = rev.IsUserRevoked(context.Background(), "u-2", now.Add(-time.Second))
+	if !yes {
+		t.Fatal("expected fresh user revoke to be honored")
+	}
+
+	// Advance the clock past MaxTTL — entries should age out on read.
+	clock = now.Add(2 * time.Minute)
+	yes, _ = rev.IsRevoked(context.Background(), "tok-fresh")
+	if yes {
+		t.Fatal("expected aged token to be unrevoked")
+	}
+	yes, _ = rev.IsUserRevoked(context.Background(), "u-2", now.Add(-time.Second))
+	if yes {
+		t.Fatal("expected aged user revoke to be unrevoked")
+	}
+
+	// Prune should shrink the maps.
+	rev.Prune(clock)
+	rev.mu.RLock()
+	defer rev.mu.RUnlock()
+	if len(rev.byToken) != 0 || len(rev.byUserAt) != 0 {
+		t.Fatalf("prune left entries: token=%d user=%d", len(rev.byToken), len(rev.byUserAt))
+	}
+}
+
+func TestMemoryRevocationsRejectsEmptyArgs(t *testing.T) {
+	rev := NewMemoryRevocations()
+	if err := rev.Revoke(context.Background(), "", "u", ""); err == nil {
+		t.Fatal("expected empty tokenID rejected")
+	}
+	if err := rev.RevokeAllForUser(context.Background(), ""); err == nil {
+		t.Fatal("expected empty userID rejected")
+	}
+}
+
 func TestRoleAuthorizer(t *testing.T) {
 	ra := &RoleAuthorizer{
 		UserRoles: func(_ context.Context, _ UserID) []string { return []string{"reader"} },

@@ -105,10 +105,18 @@ type RevocationStore interface {
 }
 
 // MemoryRevocations is the default in-memory revocation store.
+//
+// Entries are dropped when they age past MaxTTL — without that bound the
+// map would grow forever even though every revoked token has long since
+// expired. MaxTTL defaults to 24h (the mgmt-token clamp ceiling). Call
+// StartPruner(interval) to run a background goroutine that purges aged
+// entries, or call Prune(now) directly from a test harness.
 type MemoryRevocations struct {
 	mu       sync.RWMutex
 	byToken  map[string]revocation
 	byUserAt map[string]time.Time // user -> "revoke everything issued before this time"
+	maxTTL   time.Duration
+	clock    func() time.Time
 }
 
 type revocation struct {
@@ -117,40 +125,76 @@ type revocation struct {
 	At     time.Time
 }
 
-// NewMemoryRevocations constructs an empty store.
+// NewMemoryRevocations constructs an empty store with the default 24h
+// MaxTTL.
 func NewMemoryRevocations() *MemoryRevocations {
 	return &MemoryRevocations{
 		byToken:  map[string]revocation{},
 		byUserAt: map[string]time.Time{},
+		maxTTL:   24 * time.Hour,
+		clock:    time.Now,
 	}
+}
+
+// WithMaxTTL overrides the per-entry TTL. A zero or negative value
+// resets to the 24h default.
+func (m *MemoryRevocations) WithMaxTTL(d time.Duration) *MemoryRevocations {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if d <= 0 {
+		d = 24 * time.Hour
+	}
+	m.maxTTL = d
+	return m
+}
+
+// SetClock overrides the time source. Used in tests.
+func (m *MemoryRevocations) SetClock(c func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clock = c
 }
 
 // Revoke marks tokenID as invalid.
 func (m *MemoryRevocations) Revoke(_ context.Context, tokenID, userID, reason string) error {
+	if tokenID == "" {
+		return errors.New("tokenbroker: Revoke requires tokenID")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.byToken[tokenID] = revocation{UserID: userID, Reason: reason, At: time.Now().UTC()}
+	m.byToken[tokenID] = revocation{UserID: userID, Reason: reason, At: m.clock().UTC()}
 	return nil
 }
 
-// IsRevoked reports whether tokenID is in the revocation list.
+// IsRevoked reports whether tokenID is in the revocation list. Entries
+// older than MaxTTL are treated as expired and reported false.
 func (m *MemoryRevocations) IsRevoked(_ context.Context, tokenID string) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	_, ok := m.byToken[tokenID]
-	return ok, nil
+	r, ok := m.byToken[tokenID]
+	if !ok {
+		return false, nil
+	}
+	if m.clock().Sub(r.At) > m.maxTTL {
+		return false, nil
+	}
+	return true, nil
 }
 
 // RevokeAllForUser invalidates every token issued to userID before now.
 func (m *MemoryRevocations) RevokeAllForUser(_ context.Context, userID string) error {
+	if userID == "" {
+		return errors.New("tokenbroker: RevokeAllForUser requires userID")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.byUserAt[userID] = time.Now().UTC()
+	m.byUserAt[userID] = m.clock().UTC()
 	return nil
 }
 
 // IsUserRevoked reports whether userID has a blanket revocation issued
-// at-or-after issuedAt.
+// at-or-after issuedAt. Entries older than MaxTTL are treated as
+// expired and reported false.
 func (m *MemoryRevocations) IsUserRevoked(_ context.Context, userID string, issuedAt time.Time) (bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -158,7 +202,49 @@ func (m *MemoryRevocations) IsUserRevoked(_ context.Context, userID string, issu
 	if !ok {
 		return false, nil
 	}
+	if m.clock().Sub(cutoff) > m.maxTTL {
+		return false, nil
+	}
 	return !issuedAt.After(cutoff), nil
+}
+
+// Prune drops every entry older than MaxTTL relative to now. Safe to
+// call from a test or any operator-owned goroutine.
+func (m *MemoryRevocations) Prune(now time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, r := range m.byToken {
+		if now.Sub(r.At) > m.maxTTL {
+			delete(m.byToken, id)
+		}
+	}
+	for uid, at := range m.byUserAt {
+		if now.Sub(at) > m.maxTTL {
+			delete(m.byUserAt, uid)
+		}
+	}
+}
+
+// StartPruner runs Prune every interval until ctx is cancelled. A zero
+// or negative interval disables the pruner (entries still expire on
+// read; only the map shrinkage is skipped). Intended for long-lived
+// processes; tests can call Prune directly.
+func (m *MemoryRevocations) StartPruner(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				m.Prune(now)
+			}
+		}
+	}()
 }
 
 // IssueRequest is the inbound shape of POST /parsec/token.

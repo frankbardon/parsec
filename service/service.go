@@ -66,9 +66,11 @@ func (s *Service) Manifest(ctx context.Context) descriptor.Envelope {
 		Transports:       transportsList(s.p),
 		Region:           s.p.Region(),
 		Peers:            s.p.Peers(),
-		AdminUIEnabled:   s.p.AdminUIOptions().Enabled,
-		AuthOIDCEnabled:  s.p.OIDCEnabled(),
-		AuthOIDCIssuer:   s.p.OIDCIssuer(),
+		AdminUIEnabled:         s.p.AdminUIOptions().Enabled,
+		AuthOIDCEnabled:        s.p.OIDCEnabled(),
+		AuthOIDCIssuer:         s.p.OIDCIssuer(),
+		TokenBrokerEnabled:     s.p.TokenBrokerHandler() != nil,
+		RevocationStoreEnabled: s.p.RevocationStore() != nil,
 	}
 	return descriptor.NewEnvelope("parsec.manifest", m)
 }

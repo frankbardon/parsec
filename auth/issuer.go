@@ -80,10 +80,15 @@ func (i *Issuer) IssuePair(sub, channel string, channelTTL time.Duration, scopes
 	if err != nil {
 		return PairResult{}, err
 	}
+	accessJTI, err := newTokenID()
+	if err != nil {
+		return PairResult{}, err
+	}
 	access, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: []string{channel},
 		Iat: now.Unix(), Exp: accessExp.Unix(),
 		Scopes: scopesCopy,
+		JTI:    accessJTI,
 	})
 	if err != nil {
 		return PairResult{}, err
@@ -145,10 +150,15 @@ func (i *Issuer) IssueAccess(sub, channel string, refreshExp time.Time, scopes [
 	if !exp.After(now) {
 		return "", time.Time{}, errors.New("auth: refresh token has expired")
 	}
+	jti, err := newTokenID()
+	if err != nil {
+		return "", time.Time{}, err
+	}
 	tok, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: []string{channel},
 		Iat: now.Unix(), Exp: exp.Unix(),
 		Scopes: cloneScopesForClaim(scopes),
+		JTI:    jti,
 	})
 	return tok, exp, err
 }
@@ -255,10 +265,15 @@ func (i *Issuer) IssuePairForChannels(sub string, chs []string, ttl time.Duratio
 	if err != nil {
 		return PairResult{}, err
 	}
+	accessJTI, err := newTokenID()
+	if err != nil {
+		return PairResult{}, err
+	}
 	access, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: chCopy,
 		Iat: now.Unix(), Exp: accessExp.Unix(),
 		Scopes: scopesCopy,
+		JTI:    accessJTI,
 	})
 	if err != nil {
 		return PairResult{}, err
@@ -295,9 +310,14 @@ func (i *Issuer) IssueAccessForChannels(sub string, chs []string, refreshExp tim
 	if !exp.After(now) {
 		return "", time.Time{}, errors.New("auth: refresh token has expired")
 	}
+	jti, err := newTokenID()
+	if err != nil {
+		return "", time.Time{}, err
+	}
 	tok, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: append([]string(nil), chs...),
 		Iat: now.Unix(), Exp: exp.Unix(),
+		JTI: jti,
 	})
 	return tok, exp, err
 }
@@ -342,11 +362,16 @@ func (i *Issuer) IssueRotatedPair(sub, channel, oldFID string, channelTTL time.D
 	if err != nil {
 		return PairResult{}, err
 	}
+	accessJTI, err := newTokenID()
+	if err != nil {
+		return PairResult{}, err
+	}
 	scopesCopy := cloneScopesForClaim(scopes)
 	access, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: []string{channel},
 		Iat: now.Unix(), Exp: accessExp.Unix(),
 		Scopes: scopesCopy,
+		JTI:    accessJTI,
 	})
 	if err != nil {
 		return PairResult{}, err
@@ -406,10 +431,15 @@ func (i *Issuer) IssuePairWithRateLimit(sub, channel string, channelTTL time.Dur
 	if err != nil {
 		return PairResult{}, err
 	}
+	accessJTI, err := newTokenID()
+	if err != nil {
+		return PairResult{}, err
+	}
 	access, err := i.signer.Sign(Claims{
 		Sub: sub, Typ: TypeAccess, Chs: []string{channel},
 		Iat: now.Unix(), Exp: accessExp.Unix(),
 		RateLimitOverride: rl,
+		JTI:               accessJTI,
 	})
 	if err != nil {
 		return PairResult{}, err

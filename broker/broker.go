@@ -61,6 +61,11 @@ type Options struct {
 // Implementations typically check a JWT in event.Token or a per-channel ACL.
 type SubscribeAuthorizer func(ctx context.Context, userID string, ch channels.Name, event centrifuge.SubscribeEvent) error
 
+// SubscribeAuthorizer returns the configured authorizer. Surface code
+// uses this to drive integration tests of the revocation / token /
+// rate-limit chain without spinning a real client connection.
+func (b *Broker) SubscribeAuthorizer() SubscribeAuthorizer { return b.opts.SubscribeAuthorizer }
+
 // DeltaProvider reports whether ch has fossil-delta encoding enabled.
 // Used at subscribe time to negotiate the AllowedDeltaTypes set; the
 // broker has no opinion of its own.
