@@ -67,6 +67,11 @@ type Snapshot struct {
 	Tokens    TokenStats    `json:"tokens"`
 	Cache     CacheStats    `json:"cache"`
 	At        time.Time     `json:"at"`
+	// Alerts lists the AlertRule(s) that evaluated true on this snapshot.
+	// Empty when no rules are configured or none fired. Populated by the
+	// Aggregator after summing sources so a rule can reference the
+	// aggregate (e.g. "total active > N").
+	Alerts []FiringAlert `json:"alerts,omitempty"`
 }
 
 // Source is the contract every telemetry input satisfies. Each method
@@ -84,11 +89,26 @@ type Source interface {
 // Aggregator composes Source(s) into a single Snapshot.
 type Aggregator struct {
 	Sources []Source
+	// Rules, when non-empty, are evaluated against every Snapshot. The
+	// list is validated by Aggregator.WithAlerts; assigning Rules
+	// directly skips that check.
+	Rules []AlertRule
 }
 
 // New constructs an Aggregator over the supplied sources.
 func New(sources ...Source) *Aggregator {
 	return &Aggregator{Sources: sources}
+}
+
+// WithAlerts validates rules and attaches them to the Aggregator. The
+// receiver is returned so callers can chain it onto New for fluent
+// construction. Returns an error if any rule fails ValidateAlertRules.
+func (a *Aggregator) WithAlerts(rules []AlertRule) (*Aggregator, error) {
+	if err := ValidateAlertRules(rules); err != nil {
+		return nil, err
+	}
+	a.Rules = rules
+	return a, nil
 }
 
 // Snapshot computes the current aggregate. Sources are queried in
@@ -157,6 +177,7 @@ func (a *Aggregator) Snapshot(ctx context.Context) Snapshot {
 		out.Cache.HitRatePct /= float64(cacheSamples)
 	}
 	_ = rateSamples
+	out.Alerts = EvaluateAlerts(out, a.Rules)
 	return out
 }
 

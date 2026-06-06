@@ -151,3 +151,11 @@ It includes panels for:
 - key rotation activity
 
 Import via the Grafana UI (Dashboards → Import → Upload JSON).
+
+## Telemetry alerts and Prometheus exposition
+
+The aggregated `/parsec/metrics` JSON view can also surface declarative
+alert firings and a parallel Prometheus text exposition for external
+scraping. See
+[Telemetry Alerts & Prometheus Exposition](telemetry-alerts.md) for
+the rule shape, metric reference, and AlertManager wiring.

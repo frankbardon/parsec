@@ -262,6 +262,29 @@ Adding a new subsystem with internal state? Emit a metric or document
 why none is needed. See `docs/src/ops/observability.md` for the metric
 reference and Grafana starter dashboard.
 
+#### Telemetry aggregator (`telemetry/`)
+
+`telemetry.Aggregator` composes per-source dashboard stats into a
+single `Snapshot` served as JSON at `/parsec/metrics` (via
+`Options.TelemetryHandler`). The aggregator also supports:
+
+- **Declarative alert rules** via `Aggregator.WithAlerts([]AlertRule)`.
+  Each rule has a `Name`, `Severity` (`info`/`warning`/`critical`),
+  `Description`, and `Condition func(Snapshot) bool`. Rules fire on
+  every Snapshot and surface in `Snapshot.Alerts`. Validation runs at
+  `WithAlerts` time — duplicate names, empty names, nil conditions, or
+  unknown severities abort boot.
+- **Prometheus text exposition** via `Aggregator.PrometheusHandler()`.
+  Re-aggregates on every scrape and renders each Snapshot field as a
+  `parsec_telemetry_*` gauge; firing alerts surface as
+  `parsec_telemetry_alerts_firing{alert,severity}`. Cardinality budget
+  same as `/metrics`: only bounded labels (`pattern`, `aspect`,
+  `alert`, `severity`) escape.
+
+The aggregator is opt-in — embedders construct it and wire
+`Options.TelemetryHandler`. See
+[docs/src/ops/telemetry-alerts.md](../docs/src/ops/telemetry-alerts.md).
+
 ## Sink reliability
 
 `PublishOrSink` retries transient sink failures and lands terminal
@@ -356,6 +379,8 @@ Any change to a public surface MUST update its docs in the same PR.
 | New scope verb | `auth/scope.go` (Verb const + `Valid()` + `AllVerbs`) + verb-gating branch in `Scope.Authorizes` + truth-table test in `auth/scope_test.go` + manifest exposure via `descriptor.Manifest.SupportedVerbs` + `docs/src/channels/acl.md` |
 | New subsystem with state | A Prometheus collector in `internal/metrics/registry.go` (or a documented justification for none) + entry in `docs/src/ops/observability.md` metric reference |
 | New ingress point | `service.Service` call site consulting `Parsec.CheckRateLimit` before doing work; documented bucket key; entry in `docs/src/ops/rate-limiting.md` |
+| New telemetry Snapshot field | `telemetry/telemetry.go` Source method + Aggregator sum branch + corresponding `parsec_telemetry_*` gauge in `telemetry/prom.go` + metric-reference row in `docs/src/ops/telemetry-alerts.md` |
+| New severity level | `telemetry/alerts.go` Severity const + `Valid()` branch + table row in `docs/src/ops/telemetry-alerts.md` |
 
 ## Anti-patterns to refuse
 
