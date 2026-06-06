@@ -188,6 +188,16 @@ type Options struct {
 	// "unlimited" — no gating, no Redis traffic.
 	RateLimits ratelimit.RateLimits
 
+	// PerChannelPublishLimits, when non-empty, overrides RateLimits.Publish
+	// for channels whose name matches a configured pattern. Keys are
+	// channel-name patterns (see channels.ParsePattern grammar); values
+	// are the Limit applied to publishes to channels matching that
+	// pattern. parsec.New compiles each pattern at boot — an invalid
+	// pattern aborts startup so misconfigurations fail loud. Per-rule
+	// keys are namespaced separately from the default bucket, so a
+	// hot channel cannot drain the global publish budget.
+	PerChannelPublishLimits map[string]ratelimit.Limit
+
 	// OIDCConfig, when non-nil, enables the OIDC bridge: management
 	// RPC requests carrying an IdP-issued ID token bearer are
 	// translated into a synthetic mgmt Claims and accepted alongside
@@ -339,6 +349,13 @@ func New(opts Options) (*Parsec, error) {
 	if err := normalizeRedisOptions(&opts); err != nil {
 		return nil, err
 	}
+	// Compile per-channel rules before resolving the limiter so the
+	// rules end up on the RateLimits we hand back to callers.
+	rules, err := ratelimit.CompileChannelRules(opts.PerChannelPublishLimits)
+	if err != nil {
+		return nil, perr.Wrap(perr.InvalidArgument, "per-channel publish limit", err)
+	}
+	opts.RateLimits.PerChannelPublish = rules
 	// Resolve the rate limiter: explicit > built-from-RateLimits.
 	limiter, rl := resolveLimiter(opts)
 	manager := buildManager(opts, logger)
@@ -626,7 +643,11 @@ func resolveLimiter(opts Options) (ratelimit.Limiter, ratelimit.RateLimits) {
 // custom Limiter and supply it via Options.Limiter.
 func widestLimit(rl ratelimit.RateLimits) ratelimit.Limit {
 	best := ratelimit.Limit{}
-	for _, l := range []ratelimit.Limit{rl.Publish, rl.Subscribe, rl.TokenIssue} {
+	candidates := []ratelimit.Limit{rl.Publish, rl.Subscribe, rl.TokenIssue}
+	for _, r := range rl.PerChannelPublish {
+		candidates = append(candidates, r.Limit)
+	}
+	for _, l := range candidates {
 		n := l.Normalize()
 		if n.Rate == 0 {
 			continue
@@ -666,6 +687,60 @@ func (p *Parsec) CheckRateLimit(ctx context.Context, bucket, subject string, ove
 	// Both limiter implementations expose AllowWithLimit so the per-call
 	// effective ceiling overrides whatever Limit the limiter was
 	// constructed with. The Limiter interface itself stays narrow.
+	type withLimit interface {
+		AllowWithLimit(ctx context.Context, key string, n int, lim ratelimit.Limit) (ratelimit.Decision, error)
+	}
+	var dec ratelimit.Decision
+	var err error
+	if w, ok := p.limiter.(withLimit); ok {
+		dec, err = w.AllowWithLimit(ctx, key, 1, effective)
+	} else {
+		dec, err = p.limiter.Allow(ctx, key, 1)
+	}
+	if err != nil {
+		return ratelimit.Decision{}, err
+	}
+	result := "allowed"
+	if !dec.Allowed {
+		result = "denied"
+	}
+	if p.metrics != nil && p.metrics.RateLimitDecisions != nil {
+		p.metrics.RateLimitDecisions.WithLabelValues(bucket, result).Inc()
+	}
+	return dec, nil
+}
+
+// CheckPublishLimit is CheckRateLimit specialised for the publish
+// bucket with per-channel rule resolution: the channel's name is
+// matched against the operator's PerChannelPublish rules and the
+// most-specific match wins. When no rule matches, the global publish
+// default applies. Per-rule and per-token-override are honored in
+// that order — override beats the rule.
+//
+// The bucket key namespaces channels: rule-matched calls use
+// `publish-channel:<rule-raw>:<subject>`, default calls use
+// `publish:<subject>` (unchanged). That keeps a hot channel from
+// eating the global budget.
+func (p *Parsec) CheckPublishLimit(ctx context.Context, subject string, channel channels.Name, override *ratelimit.Limit) (ratelimit.Decision, error) {
+	if p.limiter == nil {
+		return ratelimit.AllowDecisionUnlimited, nil
+	}
+	effective, ruleRaw := p.rateLimits.MatchPublish(channel)
+	if override != nil && !override.Unlimited() {
+		effective = override.Normalize()
+	}
+	if effective.Unlimited() {
+		return ratelimit.AllowDecisionUnlimited, nil
+	}
+	bucket := ratelimit.BucketPublish
+	keyPrefix := bucket
+	if ruleRaw != "" {
+		// Distinct prefix per rule so two rules' subjects don't share
+		// a key. The rule raw string is part of operator config, so
+		// it's bounded cardinality.
+		keyPrefix = bucket + "-channel:" + ruleRaw
+	}
+	key := keyPrefix + ":" + subject
 	type withLimit interface {
 		AllowWithLimit(ctx context.Context, key string, n int, lim ratelimit.Limit) (ratelimit.Decision, error)
 	}

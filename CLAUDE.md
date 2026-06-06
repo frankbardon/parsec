@@ -296,9 +296,12 @@ contract:
    when nil and `RateLimits` has any non-zero bucket, parsec builds a
    `RedisLimiter` (when `RedisClient` is set) or a `MemoryLimiter`.
 4. Bucket keys are stable: `publish:<mgmt-subject>`,
-   `subscribe:<userID>`, `token-issue:<remote-ip>`. The HTTP middleware
-   in `internal/server/http.go` stamps the subject + IP into the
-   request context via `parsec.WithSubject` / `parsec.WithRemoteIP`.
+   `subscribe:<userID>`, `token-issue:<remote-ip>`. Per-channel publish
+   rules (`Options.PerChannelPublishLimits`) namespace the key as
+   `publish-channel:<rule-pattern>:<subject>` so isolated channels do
+   not share the global publish budget. The HTTP middleware in
+   `internal/server/http.go` stamps the subject + IP into the request
+   context via `parsec.WithSubject` / `parsec.WithRemoteIP`.
 5. A budget hit returns `PARSEC_RATE_LIMITED` → Twirp
    `resource_exhausted` → HTTP 429.
 6. Per-token override: `auth.Claims.RateLimitOverride` (json `rl`) may
