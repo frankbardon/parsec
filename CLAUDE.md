@@ -96,7 +96,7 @@ non-blocking sends, so use a buffered channel. `parsec.New` composes the
 subscribe authorizer so closed/deleted channels reject new subscribes
 even before the bridge runs.
 
-### Auth is HMAC-SHA256 only, with `kid`-based key rotation
+### Auth is JWT with `kid`-based key rotation; HS256 default, RS256/EdDSA optional
 The `auth/` package mints three token types:
 
 | Type | TTL default | Purpose |
@@ -105,14 +105,24 @@ The `auth/` package mints three token types:
 | `refresh` | min(channel TTL, 1h) | Exchange at `RefreshToken` RPC for a fresh access + fresh refresh (rotated per redemption; reuse triggers family revoke — see `docs/src/ops/refresh-rotation.md`) |
 | `mgmt` | 24h (clamped [1h, 7d]) | `Authorization: Bearer` on the management RPC |
 
-Tokens are compact JWTs whose JOSE header is **fixed per key** —
-`{"alg":"HS256","kid":"<kid>","typ":"JWT"}`. The verifier refuses any
-other `alg`/`typ` AND refuses tokens without a `kid`. The `kid` is
-looked up in a `KeyRing` to fetch the verifying secret.
+Tokens are compact JWTs. The JOSE header is **fixed per key** —
+`{"alg":"<HS256|RS256|EdDSA>","kid":"<kid>","typ":"JWT"}`. The
+verifier refuses any unknown `alg`/`typ`, refuses tokens without a
+`kid`, and refuses tokens whose declared `alg` does not match the
+algorithm of the key the `kid` points to (defends against key
+confusion). The `kid` is looked up in a `KeyRing` to fetch the
+verifying key material.
 
-The KeyRing holds N≥1 keys, exactly one with role `active` (the signer).
-Others are `verify-only`. Retired keys stop verifying immediately and
-drop from the next snapshot.
+The KeyRing holds N≥1 keys, exactly one with role `active` (the
+signer). Each key carries an `Alg` (HS256 / RS256 / EdDSA); a single
+ring can mix algorithms. Others are `verify-only`. Retired keys stop
+verifying immediately and drop from the next snapshot.
+
+Asymmetric public keys are exposed via JWKS at `/parsec/jwks.json`
+when at least one non-retired asymmetric key is in the ring. HMAC
+keys are NEVER exposed there — they are shared secrets, not
+verifying material. See
+[docs/src/ops/asymmetric-signing.md](../docs/src/ops/asymmetric-signing.md).
 
 Persistence: `parsec.Options.StateDir` makes the ring file-backed at
 `<StateDir>/keyring.json` (mode `0600`, parent `0700`). Without

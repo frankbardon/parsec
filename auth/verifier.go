@@ -1,11 +1,15 @@
 package auth
 
 import (
+	"crypto"
+	"crypto/ed25519"
 	"crypto/hmac"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -60,11 +64,15 @@ func (v *Verifier) verify(token string, expected Type) (Claims, error) {
 	if err := json.Unmarshal(headerBytes, &h); err != nil {
 		return Claims{}, ErrMalformedToken
 	}
-	if h.Alg != "HS256" || h.Typ != "JWT" {
+	if h.Typ != "JWT" {
 		return Claims{}, ErrUnsupportedAlg
 	}
 	if h.Kid == "" {
 		return Claims{}, ErrMalformedToken
+	}
+	hdrAlg := Alg(h.Alg)
+	if err := hdrAlg.Valid(); err != nil {
+		return Claims{}, ErrUnsupportedAlg
 	}
 	key, err := v.ring.Get(h.Kid)
 	if err != nil {
@@ -72,17 +80,22 @@ func (v *Verifier) verify(token string, expected Type) (Claims, error) {
 		// which case applies (defends against probing).
 		return Claims{}, ErrInvalidSignature
 	}
-	// Recompute signature using the precomputed header bytes to avoid
-	// any chance of canonicalization drift.
-	mac := hmac.New(sha256.New, key.Secret)
-	mac.Write([]byte(headerB64 + "." + payloadB64))
-	want := mac.Sum(nil)
+	// Header-declared alg must match the alg of the key it points to:
+	// no swapping (e.g. an attacker presenting an HMAC of an RSA key's
+	// public material as if it were the original RS256 signature).
+	keyAlg := key.Alg
+	if keyAlg == "" {
+		keyAlg = AlgHS256
+	}
+	if hdrAlg != keyAlg {
+		return Claims{}, ErrUnsupportedAlg
+	}
 	got, err := base64.RawURLEncoding.DecodeString(sigB64)
 	if err != nil {
 		return Claims{}, ErrMalformedToken
 	}
-	if !hmac.Equal(want, got) {
-		return Claims{}, ErrInvalidSignature
+	if err := verifyWith(key, []byte(headerB64+"."+payloadB64), got); err != nil {
+		return Claims{}, err
 	}
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(payloadB64)
 	if err != nil {
@@ -106,4 +119,44 @@ func (v *Verifier) verify(token string, expected Type) (Claims, error) {
 		return Claims{}, ErrTypeMismatch
 	}
 	return c, nil
+}
+
+// verifyWith checks sig against msg under k. Returns ErrInvalidSignature
+// on any verification failure; any non-nil error from RSA/Ed25519 maps
+// to ErrInvalidSignature so callers cannot distinguish failure modes.
+func verifyWith(k Key, msg, sig []byte) error {
+	alg := k.Alg
+	if alg == "" {
+		alg = AlgHS256
+	}
+	switch alg {
+	case AlgHS256:
+		mac := hmac.New(sha256.New, k.Secret)
+		mac.Write(msg)
+		if !hmac.Equal(mac.Sum(nil), sig) {
+			return ErrInvalidSignature
+		}
+		return nil
+	case AlgRS256:
+		pub, ok := k.Public.(*rsa.PublicKey)
+		if !ok {
+			return ErrInvalidSignature
+		}
+		sum := sha256.Sum256(msg)
+		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], sig); err != nil {
+			return ErrInvalidSignature
+		}
+		return nil
+	case AlgEdDSA:
+		pub, ok := k.Public.(ed25519.PublicKey)
+		if !ok {
+			return ErrInvalidSignature
+		}
+		if !ed25519.Verify(pub, msg, sig) {
+			return ErrInvalidSignature
+		}
+		return nil
+	default:
+		return fmt.Errorf("auth: cannot verify alg %q", alg)
+	}
 }

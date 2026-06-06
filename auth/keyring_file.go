@@ -11,6 +11,22 @@ import (
 // KeyringFileName is the conventional file name inside the state dir.
 const KeyringFileName = "keyring.json"
 
+// keyringFormatVersion is what fresh SaveKeyRing writes. "2" introduces
+// per-key Alg + PrivatePEM. "1" predates asymmetric signing and is
+// still accepted by loaders.
+const keyringFormatVersion = "2"
+
+// supportedFormatVersion reports whether a snapshot tagged v can be
+// loaded by this parsec build. Empty = legacy (treat as v1).
+func supportedFormatVersion(v string) bool {
+	switch v {
+	case "", "1", "2":
+		return true
+	default:
+		return false
+	}
+}
+
 // SaveKeyRing writes the ring's snapshot to path, atomically. The file is
 // created with mode 0600; the parent directory is created with mode 0700
 // if missing.
@@ -25,7 +41,7 @@ func SaveKeyRing(path string, r *KeyRing) error {
 		return fmt.Errorf("auth: create state dir: %w", err)
 	}
 	snap := r.Snapshot()
-	snap.FormatVersion = "1"
+	snap.FormatVersion = keyringFormatVersion
 	body, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return err
@@ -53,7 +69,7 @@ func LoadKeyRing(path string) (*KeyRing, error) {
 	if err := json.Unmarshal(body, &snap); err != nil {
 		return nil, fmt.Errorf("auth: parse keyring: %w", err)
 	}
-	if snap.FormatVersion != "" && snap.FormatVersion != "1" {
+	if !supportedFormatVersion(snap.FormatVersion) {
 		return nil, fmt.Errorf("auth: keyring format_version %q is not supported", snap.FormatVersion)
 	}
 	r := NewKeyRing()
@@ -75,7 +91,7 @@ func ReloadInto(path string, ring *KeyRing) error {
 	if err := json.Unmarshal(body, &snap); err != nil {
 		return fmt.Errorf("auth: parse keyring: %w", err)
 	}
-	if snap.FormatVersion != "" && snap.FormatVersion != "1" {
+	if !supportedFormatVersion(snap.FormatVersion) {
 		return fmt.Errorf("auth: keyring format_version %q is not supported", snap.FormatVersion)
 	}
 	return ring.LoadSnapshot(snap)

@@ -305,7 +305,7 @@ func TestService_KeyManagement(t *testing.T) {
 	}
 
 	// generate a new key.
-	k2, err := svc.GenerateKey(ctx)
+	k2, err := svc.GenerateKey(ctx, auth.AlgHS256)
 	if err != nil {
 		t.Fatal(err)
 	}

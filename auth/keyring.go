@@ -1,14 +1,50 @@
 package auth
 
 import (
+	"crypto"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 )
+
+// Alg names a token-signing algorithm. The default is HS256 (HMAC over
+// a 32-byte secret); RS256 and EdDSA are the asymmetric alternatives.
+// The set is closed — adding a new alg requires a verifier branch and
+// snapshot-format support.
+type Alg string
+
+const (
+	AlgHS256 Alg = "HS256"
+	AlgRS256 Alg = "RS256"
+	AlgEdDSA Alg = "EdDSA"
+)
+
+// SupportedAlgs returns the algs Parsec can sign and verify, in the
+// preferred order operators see them in CLI help. Exposed for the
+// manifest layer.
+func SupportedAlgs() []Alg { return []Alg{AlgHS256, AlgEdDSA, AlgRS256} }
+
+// IsAsymmetric reports whether a is one of the public-key algs. HMAC
+// keys are symmetric and are NEVER exposed via the JWKS endpoint.
+func (a Alg) IsAsymmetric() bool { return a == AlgRS256 || a == AlgEdDSA }
+
+// Valid returns nil if a is one of the supported algs.
+func (a Alg) Valid() error {
+	switch a {
+	case AlgHS256, AlgRS256, AlgEdDSA:
+		return nil
+	default:
+		return fmt.Errorf("auth: unsupported alg %q", a)
+	}
+}
 
 // Role is a key's lifecycle position in a KeyRing.
 type Role string
@@ -26,11 +62,24 @@ const (
 	RoleRetired Role = "retired"
 )
 
-// Key is one HMAC secret with rotation metadata. Construct via KeyRing,
-// never directly.
+// Key is one signing key with rotation metadata. The material it
+// carries depends on Alg:
+//
+//   - AlgHS256: Secret is the 32+ byte HMAC secret. Private/Public
+//     are nil.
+//   - AlgRS256: Private is an *rsa.PrivateKey, Public is its
+//     *rsa.PublicKey. Secret is nil.
+//   - AlgEdDSA: Private is an ed25519.PrivateKey, Public is its
+//     ed25519.PublicKey. Secret is nil.
+//
+// Construct via KeyRing methods, never directly — the headerB64 cache
+// is populated at install time.
 type Key struct {
 	ID        string
+	Alg       Alg
 	Secret    []byte
+	Private   crypto.Signer
+	Public    crypto.PublicKey
 	Role      Role
 	CreatedAt time.Time
 	RetiredAt *time.Time
@@ -123,24 +172,74 @@ func (r *KeyRing) List() []Key {
 	return out
 }
 
-// Generate creates a fresh 32-byte secret, installs it as a new key in the
-// ring, and returns a copy. If the ring was empty the new key becomes
-// active; otherwise it joins as verify-only.
+// Generate creates a fresh HS256 key (32-byte secret) and installs
+// it. Kept for source compatibility with callers that predate the
+// alg-aware API; prefer GenerateAlg for new code.
 func (r *KeyRing) Generate() (Key, error) {
+	return r.GenerateAlg(AlgHS256)
+}
+
+// GenerateAlg creates a fresh key of the requested algorithm and
+// installs it as verify-only (or active if the ring was empty). For
+// AlgRS256 the default modulus is 2048 bits — call GenerateRSA for
+// other sizes.
+func (r *KeyRing) GenerateAlg(alg Alg) (Key, error) {
+	switch alg {
+	case AlgHS256, "":
+		id, err := newKeyID()
+		if err != nil {
+			return Key{}, err
+		}
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return Key{}, errors.New("auth: keyring generate failed")
+		}
+		return r.Add(id, secret)
+	case AlgEdDSA:
+		return r.GenerateEd25519()
+	case AlgRS256:
+		return r.GenerateRSA(2048)
+	default:
+		return Key{}, alg.Valid()
+	}
+}
+
+// GenerateEd25519 creates a fresh Ed25519 keypair and installs it.
+func (r *KeyRing) GenerateEd25519() (Key, error) {
 	id, err := newKeyID()
 	if err != nil {
 		return Key{}, err
 	}
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return Key{}, errors.New("auth: keyring generate failed")
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return Key{}, fmt.Errorf("auth: ed25519 generate: %w", err)
 	}
-	return r.Add(id, secret)
+	return r.addAsymmetric(id, AlgEdDSA, priv, pub)
 }
 
-// Add installs id+secret into the ring. If the ring was empty the new key
-// becomes active; otherwise it joins as verify-only and must be Promoted
-// before it signs.
+// GenerateRSA creates a fresh RSA keypair of bits modulus and installs
+// it. Valid sizes are 2048, 3072, and 4096; anything else errors so an
+// operator cannot accidentally land a sub-2048 key.
+func (r *KeyRing) GenerateRSA(bits int) (Key, error) {
+	switch bits {
+	case 2048, 3072, 4096:
+	default:
+		return Key{}, fmt.Errorf("auth: rsa key size %d not supported (use 2048/3072/4096)", bits)
+	}
+	id, err := newKeyID()
+	if err != nil {
+		return Key{}, err
+	}
+	priv, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		return Key{}, fmt.Errorf("auth: rsa generate: %w", err)
+	}
+	return r.addAsymmetric(id, AlgRS256, priv, &priv.PublicKey)
+}
+
+// Add installs an HS256 id+secret into the ring. If the ring was empty
+// the new key becomes active; otherwise it joins as verify-only and
+// must be Promoted before it signs.
 func (r *KeyRing) Add(id string, secret []byte) (Key, error) {
 	if id == "" {
 		return Key{}, errors.New("auth: key id required")
@@ -159,7 +258,65 @@ func (r *KeyRing) Add(id string, secret []byte) (Key, error) {
 	}
 	k := &Key{
 		ID:        id,
+		Alg:       AlgHS256,
 		Secret:    append([]byte(nil), secret...),
+		Role:      role,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := r.installHeader(k); err != nil {
+		return Key{}, err
+	}
+	r.byID[id] = k
+	if role == RoleActive {
+		r.active = id
+	}
+	out := *k
+	return out, nil
+}
+
+// AddEd25519 installs an Ed25519 keypair into the ring. Same role
+// semantics as Add.
+func (r *KeyRing) AddEd25519(id string, priv ed25519.PrivateKey) (Key, error) {
+	if l := len(priv); l != ed25519.PrivateKeySize {
+		return Key{}, fmt.Errorf("auth: ed25519 private key wrong size: %d", l)
+	}
+	return r.addAsymmetric(id, AlgEdDSA, priv, priv.Public())
+}
+
+// AddRSA installs an RSA private key into the ring. The caller must
+// have generated a 2048+ bit key.
+func (r *KeyRing) AddRSA(id string, priv *rsa.PrivateKey) (Key, error) {
+	if priv == nil {
+		return Key{}, errors.New("auth: nil RSA private key")
+	}
+	if bits := priv.N.BitLen(); bits < 2048 {
+		return Key{}, fmt.Errorf("auth: rsa key %d bits too small", bits)
+	}
+	return r.addAsymmetric(id, AlgRS256, priv, &priv.PublicKey)
+}
+
+// addAsymmetric installs a public-key keypair. Caller must NOT hold r.mu.
+func (r *KeyRing) addAsymmetric(id string, alg Alg, priv crypto.Signer, pub crypto.PublicKey) (Key, error) {
+	if id == "" {
+		return Key{}, errors.New("auth: key id required")
+	}
+	if priv == nil {
+		return Key{}, errors.New("auth: nil private key")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.byID[id]; exists {
+		return Key{}, fmt.Errorf("auth: key id %q already exists", id)
+	}
+	role := RoleVerifyOnly
+	if len(r.byID) == 0 {
+		role = RoleActive
+	}
+	k := &Key{
+		ID:        id,
+		Alg:       alg,
+		Private:   priv,
+		Public:    pub,
 		Role:      role,
 		CreatedAt: time.Now().UTC(),
 	}
@@ -218,7 +375,7 @@ func (r *KeyRing) Retire(id string) error {
 // installHeader pre-computes the per-key base64url JOSE header. Caller
 // must hold r.mu in write mode.
 func (r *KeyRing) installHeader(k *Key) error {
-	b, err := buildHeader(k.ID)
+	b, err := buildHeader(k.ID, k.Alg)
 	if err != nil {
 		return err
 	}
@@ -247,12 +404,34 @@ func (r *KeyRing) Snapshot() Snapshot {
 		if k.Role == RoleRetired {
 			continue
 		}
-		secretCopy := append([]byte(nil), k.Secret...)
 		entry := SnapshotKey{
 			ID:        k.ID,
-			SecretHex: hex.EncodeToString(secretCopy),
+			Alg:       k.Alg,
 			Role:      k.Role,
 			CreatedAt: k.CreatedAt.UTC().Format(time.RFC3339Nano),
+		}
+		if entry.Alg == "" {
+			entry.Alg = AlgHS256
+		}
+		switch entry.Alg {
+		case AlgHS256:
+			entry.SecretHex = hex.EncodeToString(append([]byte(nil), k.Secret...))
+		case AlgEdDSA:
+			if priv, ok := k.Private.(ed25519.PrivateKey); ok {
+				// Marshal full PKCS#8 private blob so loaders can recover
+				// the key without inferring algorithm. The 32-byte seed
+				// is recoverable as priv.Seed() but PKCS#8 is the JOSE
+				// canonical form and reads back through x509.
+				if blob, err := x509.MarshalPKCS8PrivateKey(priv); err == nil {
+					entry.PrivatePEM = encodePEM("PRIVATE KEY", blob)
+				}
+			}
+		case AlgRS256:
+			if priv, ok := k.Private.(*rsa.PrivateKey); ok {
+				if blob, err := x509.MarshalPKCS8PrivateKey(priv); err == nil {
+					entry.PrivatePEM = encodePEM("PRIVATE KEY", blob)
+				}
+			}
 		}
 		if k.RetiredAt != nil {
 			entry.RetiredAt = k.RetiredAt.UTC().Format(time.RFC3339Nano)
@@ -263,27 +442,54 @@ func (r *KeyRing) Snapshot() Snapshot {
 	return out
 }
 
+// encodePEM returns a PEM block as a string.
+func encodePEM(blockType string, data []byte) string {
+	return string(pem.EncodeToMemory(&pem.Block{Type: blockType, Bytes: data}))
+}
+
 // LoadSnapshot replaces the ring's contents with the snapshot's. Safe to
 // call on a running ring — the swap is atomic from the caller's
-// perspective.
+// perspective. Legacy entries (Alg empty / empty PrivatePEM) are read
+// as HS256 + secret_hex.
 func (r *KeyRing) LoadSnapshot(s Snapshot) error {
 	if s.ActiveKeyID == "" && len(s.Keys) > 0 {
 		return errors.New("auth: snapshot has keys but no active_key_id")
 	}
 	next := make(map[string]*Key, len(s.Keys))
 	for _, e := range s.Keys {
-		secret, err := hex.DecodeString(e.SecretHex)
-		if err != nil {
-			return fmt.Errorf("auth: snapshot key %q: secret_hex: %w", e.ID, err)
-		}
-		if len(secret) < 32 {
-			return fmt.Errorf("auth: snapshot key %q: secret too short", e.ID)
-		}
 		createdAt, err := time.Parse(time.RFC3339Nano, e.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("auth: snapshot key %q: created_at: %w", e.ID, err)
 		}
-		k := &Key{ID: e.ID, Secret: secret, Role: e.Role, CreatedAt: createdAt}
+		alg := e.Alg
+		if alg == "" {
+			alg = AlgHS256
+		}
+		if err := alg.Valid(); err != nil {
+			return fmt.Errorf("auth: snapshot key %q: %w", e.ID, err)
+		}
+		k := &Key{ID: e.ID, Alg: alg, Role: e.Role, CreatedAt: createdAt}
+		switch alg {
+		case AlgHS256:
+			secret, err := hex.DecodeString(e.SecretHex)
+			if err != nil {
+				return fmt.Errorf("auth: snapshot key %q: secret_hex: %w", e.ID, err)
+			}
+			if len(secret) < 32 {
+				return fmt.Errorf("auth: snapshot key %q: secret too short", e.ID)
+			}
+			k.Secret = secret
+		case AlgRS256, AlgEdDSA:
+			if e.PrivatePEM == "" {
+				return fmt.Errorf("auth: snapshot key %q: missing private_pem", e.ID)
+			}
+			priv, pub, err := decodePrivatePEM(e.PrivatePEM, alg)
+			if err != nil {
+				return fmt.Errorf("auth: snapshot key %q: %w", e.ID, err)
+			}
+			k.Private = priv
+			k.Public = pub
+		}
 		if e.RetiredAt != "" {
 			t, err := time.Parse(time.RFC3339Nano, e.RetiredAt)
 			if err != nil {
@@ -306,10 +512,39 @@ func (r *KeyRing) LoadSnapshot(s Snapshot) error {
 	return nil
 }
 
+// decodePrivatePEM extracts the (signer, public) pair from a PKCS#8
+// PEM blob and validates it against the declared alg.
+func decodePrivatePEM(s string, alg Alg) (crypto.Signer, crypto.PublicKey, error) {
+	block, _ := pem.Decode([]byte(s))
+	if block == nil {
+		return nil, nil, errors.New("private_pem: no PEM block")
+	}
+	priv, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, nil, fmt.Errorf("private_pem parse: %w", err)
+	}
+	switch alg {
+	case AlgEdDSA:
+		ed, ok := priv.(ed25519.PrivateKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("private_pem: expected Ed25519, got %T", priv)
+		}
+		return ed, ed.Public(), nil
+	case AlgRS256:
+		rk, ok := priv.(*rsa.PrivateKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("private_pem: expected RSA, got %T", priv)
+		}
+		return rk, &rk.PublicKey, nil
+	default:
+		return nil, nil, fmt.Errorf("private_pem: alg %s not asymmetric", alg)
+	}
+}
+
 // buildHeaderInto fills k.headerB64. Defined here (not on KeyRing) so
 // LoadSnapshot can use it before installing the key.
 func buildHeaderInto(k *Key) error {
-	b, err := buildHeader(k.ID)
+	b, err := buildHeader(k.ID, k.Alg)
 	if err != nil {
 		return err
 	}
@@ -324,11 +559,17 @@ type Snapshot struct {
 	Keys          []SnapshotKey `json:"keys"`
 }
 
-// SnapshotKey is one persisted key entry.
+// SnapshotKey is one persisted key entry. Algorithm-specific material:
+//
+//   - HS256: SecretHex is the 32+ byte HMAC secret (legacy entries
+//     without Alg are also read as HS256).
+//   - RS256 / EdDSA: PrivatePEM is a PKCS#8 PEM blob.
 type SnapshotKey struct {
-	ID        string `json:"id"`
-	SecretHex string `json:"secret_hex"`
-	Role      Role   `json:"role"`
-	CreatedAt string `json:"created_at"`
-	RetiredAt string `json:"retired_at,omitempty"`
+	ID         string `json:"id"`
+	Alg        Alg    `json:"alg,omitempty"`
+	SecretHex  string `json:"secret_hex,omitempty"`
+	PrivatePEM string `json:"private_pem,omitempty"`
+	Role       Role   `json:"role"`
+	CreatedAt  string `json:"created_at"`
+	RetiredAt  string `json:"retired_at,omitempty"`
 }
