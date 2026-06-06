@@ -55,6 +55,15 @@ func New(p *parsec.Parsec, svc *service.Service, logger *slog.Logger, validate B
 	wsHandler := centrifuge.NewWebsocketHandler(p.Broker().Node(), centrifuge.WebsocketConfig{})
 	mux.Handle("/connection/websocket", wsHandler)
 
+	// Centrifuge HTTP-streaming transport. Bidirectional emulation: the
+	// client POSTs a connect command body, the server holds the response
+	// open and streams newline-delimited JSON (or octet-protobuf) frames
+	// back. Production-grade — sits alongside websocket so clients on
+	// networks that block WS upgrades have a real fallback. The thin SSE
+	// handler at /sse remains a CLI-only probe.
+	httpStreamHandler := centrifuge.NewHTTPStreamHandler(p.Broker().Node(), centrifuge.HTTPStreamConfig{})
+	mux.Handle("/connection/http_stream", httpStreamHandler)
+
 	// Optional WebTransport (HTTP/3) handler.
 	if wt := p.WebTransportOptions(); wt.Enabled() {
 		wtOpts := WebTransportOptions{

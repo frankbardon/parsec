@@ -65,6 +65,7 @@
 - [Dead-Letter Queue](ops/dlq.md)
 - [Rate Limiting](ops/rate-limiting.md)
 - [WebTransport (HTTP/3)](ops/webtransport.md)
+- [HTTP-Streaming Transport](ops/http-stream.md)
 - [Delta Compression](ops/delta-compression.md)
 - [Multi-Region](ops/multi-region.md)
 - [Admin UI](ops/admin-ui.md)

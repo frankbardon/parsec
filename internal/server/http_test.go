@@ -262,3 +262,61 @@ func TestHTTP_WebsocketEndpointAccepts101(t *testing.T) {
 		t.Fatalf("route not mounted: %d", resp.StatusCode)
 	}
 }
+
+// TestHTTP_HTTPStreamGETReturnsMethodNotAllowed pings the http-stream
+// endpoint with a plain GET — the centrifuge handler requires POST, so
+// a 405 means "route mounted, wrong method" and a 404 would prove the
+// mux didn't pick the path up.
+func TestHTTP_HTTPStreamGETReturnsMethodNotAllowed(t *testing.T) {
+	srv, _, stop := testutil.NewTestServer(t)
+	defer stop()
+	resp, err := http.Get(srv.URL + "/connection/http_stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		t.Fatalf("route not mounted: %d", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want 405", resp.StatusCode)
+	}
+}
+
+// TestHTTP_HTTPStreamOPTIONSReturnsNoContent verifies CORS preflight
+// handling on the http-stream endpoint — centrifuge's handler answers
+// OPTIONS with 204 + Allow headers, which lets browser clients run
+// cross-origin POSTs against the stream.
+func TestHTTP_HTTPStreamOPTIONSReturnsNoContent(t *testing.T) {
+	srv, _, stop := testutil.NewTestServer(t)
+	defer stop()
+	req, _ := http.NewRequest(http.MethodOptions, srv.URL+"/connection/http_stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("status = %d, want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Methods"); !strings.Contains(got, "POST") {
+		t.Errorf("Allow-Methods = %q, want POST", got)
+	}
+}
+
+// TestHTTP_ManifestExposesHTTPStreamTransport asserts the manifest
+// surface advertises the http_stream transport so client SDKs can
+// discover it via the public Manifest RPC.
+func TestHTTP_ManifestExposesHTTPStreamTransport(t *testing.T) {
+	srv, _, stop := testutil.NewTestServer(t)
+	defer stop()
+	resp, err := http.Get(srv.URL + "/manifest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `"http_stream"`) {
+		t.Fatalf("manifest missing http_stream transport: %s", body)
+	}
+}

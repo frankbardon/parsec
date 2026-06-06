@@ -74,10 +74,10 @@ func (s *Service) Manifest(ctx context.Context) descriptor.Envelope {
 }
 
 // transportsList returns the wire transports currently mounted. Always
-// includes "websocket"; appends "webtransport" when the HTTP/3 listener
-// is configured.
+// includes "websocket" and "http_stream"; appends "webtransport" when
+// the HTTP/3 listener is configured.
 func transportsList(p *parsec.Parsec) []string {
-	out := []string{"websocket"}
+	out := []string{"websocket", "http_stream"}
 	if p.WebTransportOptions().Enabled() {
 		out = append(out, "webtransport")
 	}

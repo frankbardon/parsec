@@ -225,6 +225,15 @@ the `Authorization: Bearer` header via an `http.RoundTripper`.
 Mounted at `/connection/websocket`. Centrifuge's default WebsocketHandler.
 Browser clients connect with `centrifuge-js`.
 
+### HTTP-streaming (`internal/server/http.go`)
+Mounted at `/connection/http_stream`. Centrifuge's default
+`HTTPStreamHandler` — bidirectional emulation transport. The client
+POSTs the connect command and the server streams newline-delimited
+JSON (or octet-protobuf) frames back. Production-grade fallback for
+clients on networks that block WebSocket upgrades; advertised in the
+manifest's `transports` list as `http_stream`. See
+[docs/src/ops/http-stream.md](../docs/src/ops/http-stream.md).
+
 ### SSE (`internal/server/sse.go`)
 Tiny polling-backed Server-Sent Events stream at `/sse?channel=<name>`.
 Used only by the CLI `subscribe` probe — not a production transport.
