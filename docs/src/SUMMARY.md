@@ -62,6 +62,7 @@
 - [Asymmetric Signing (RS256 / EdDSA)](ops/asymmetric-signing.md)
 - [OIDC Bridge](ops/oidc.md)
 - [Observability](ops/observability.md)
+- [Telemetry Alerts & Prometheus Exposition](ops/telemetry-alerts.md)
 - [Dead-Letter Queue](ops/dlq.md)
 - [Rate Limiting](ops/rate-limiting.md)
 - [WebTransport (HTTP/3)](ops/webtransport.md)
