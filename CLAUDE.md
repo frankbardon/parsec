@@ -96,6 +96,30 @@ non-blocking sends, so use a buffered channel. `parsec.New` composes the
 subscribe authorizer so closed/deleted channels reject new subscribes
 even before the bridge runs.
 
+### Token broker (`tokenbroker/`)
+The token broker is the policy point for user-facing connection tokens.
+The library mints tokens via `auth.Issuer`; the broker sits in front and
+adds:
+
+- Channel ACL via a pluggable `Authorizer` (RoleAuthorizer / AllowAll /
+  custom).
+- Delegated issuance (`/parsec/token/delegate`) where a backend service
+  mints "on behalf of" a user; both identities land in the audit log.
+- Revocation (`/parsec/revoke`) backed by `RevocationStore`. Two impls
+  ship: `MemoryRevocations` (single-node; entries age out past
+  `MaxTTL`; call `StartPruner` to reclaim memory) and `RedisRevocations`
+  (multi-node; SET with EX `MaxTTL`).
+
+Every access token now carries a unique `jti` claim so single-token
+revocation works. Subscribe-side revocation is plumbed via
+`parsec.Options.RevocationStore` — wired identically on the broker
+side, the subscribe authorizer consults the store on every private
+channel attempt and denies revoked tokens with PARSEC_AUTH_DENIED. A
+deployment that exposes `/parsec/revoke` but leaves
+`Options.RevocationStore` nil cannot deny mid-flight tokens; the
+manifest's `revocation_store_enabled` flag surfaces that gap. See
+[docs/src/ops/token-broker.md](../docs/src/ops/token-broker.md).
+
 ### Auth is JWT with `kid`-based key rotation; HS256 default, RS256/EdDSA optional
 The `auth/` package mints three token types:
 
@@ -381,6 +405,7 @@ Any change to a public surface MUST update its docs in the same PR.
 | New ingress point | `service.Service` call site consulting `Parsec.CheckRateLimit` before doing work; documented bucket key; entry in `docs/src/ops/rate-limiting.md` |
 | New telemetry Snapshot field | `telemetry/telemetry.go` Source method + Aggregator sum branch + corresponding `parsec_telemetry_*` gauge in `telemetry/prom.go` + metric-reference row in `docs/src/ops/telemetry-alerts.md` |
 | New severity level | `telemetry/alerts.go` Severity const + `Valid()` branch + table row in `docs/src/ops/telemetry-alerts.md` |
+| New `tokenbroker.RevocationStore` impl | implement all four interface methods + apply `MaxTTL` semantics + tests for token-scope + user-scope round trips + entry in `docs/src/ops/token-broker.md` |
 
 ## Anti-patterns to refuse
 

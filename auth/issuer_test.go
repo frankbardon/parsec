@@ -14,6 +14,35 @@ func newTestIssuer(t *testing.T) (*Issuer, *Verifier) {
 	return NewIssuer(signer), verifier
 }
 
+func TestIssuer_AccessTokenCarriesJTI(t *testing.T) {
+	iss, ver := newTestIssuer(t)
+	pair, err := iss.IssuePair("user-1", "private:test.x.1", 10*time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1, err := ver.Verify(pair.AccessToken, TypeAccess)
+	if err != nil {
+		t.Fatalf("verify access: %v", err)
+	}
+	if c1.JTI == "" {
+		t.Fatal("access token missing jti")
+	}
+	// Second IssuePair must produce a different access JTI.
+	pair2, err := iss.IssuePair("user-1", "private:test.x.1", 10*time.Minute, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, _ := ver.Verify(pair2.AccessToken, TypeAccess)
+	if c1.JTI == c2.JTI {
+		t.Fatal("two pairs must produce distinct access JTIs")
+	}
+	// Refresh JTI must differ from access JTI within the same pair.
+	cr, _ := ver.Verify(pair.RefreshToken, TypeRefresh)
+	if cr.JTI == "" || cr.JTI == c1.JTI {
+		t.Fatalf("refresh JTI %q must be non-empty and distinct from access JTI %q", cr.JTI, c1.JTI)
+	}
+}
+
 func TestIssuer_Pair_TTLBoundedByChannel(t *testing.T) {
 	iss, _ := newTestIssuer(t)
 	pair, err := iss.IssuePair("user-1", "private:test.x.1", 10*time.Minute, nil)

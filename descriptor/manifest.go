@@ -139,6 +139,20 @@ type Manifest struct {
 	// bridge is enabled, "" otherwise. Lets operators discover the
 	// right `parsec login oidc` invocation from the manifest.
 	AuthOIDCIssuer string `json:"auth_oidc_issuer,omitempty"`
+
+	// TokenBrokerEnabled reports whether the token-broker handler is
+	// mounted at /parsec/token, /parsec/token/delegate, /parsec/revoke.
+	// Off by default; operators flip it on by wiring
+	// Options.TokenBrokerHandler.
+	TokenBrokerEnabled bool `json:"token_broker_enabled"`
+
+	// RevocationStoreEnabled reports whether the subscribe authorizer
+	// consults a revocation store on every private channel subscribe.
+	// Off by default; turned on by wiring Options.RevocationStore. A
+	// running deployment with brokered tokens but no revocation store
+	// CANNOT actually deny mid-flight tokens; this flag surfaces that
+	// fact to operators.
+	RevocationStoreEnabled bool `json:"revocation_store_enabled"`
 }
 
 // SinkRetrySummary is the manifest snapshot of the sink retry config.
