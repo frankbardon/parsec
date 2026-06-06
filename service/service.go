@@ -164,7 +164,7 @@ func (s *Service) DeleteChannel(ctx context.Context, name string) error {
 // remote IP is the fallback; when neither is available the call
 // proceeds without gating.
 func (s *Service) Publish(ctx context.Context, name string, data []byte) (PublishAck, error) {
-	if err := s.gatePublish(ctx); err != nil {
+	if err := s.gatePublish(ctx, name); err != nil {
 		return PublishAck{}, err
 	}
 	res, err := s.p.Publish(ctx, name, data)
@@ -174,10 +174,17 @@ func (s *Service) Publish(ctx context.Context, name string, data []byte) (Publis
 	return PublishAck{Offset: res.Offset, Epoch: res.Epoch}, nil
 }
 
-// gatePublish charges one event against the publish bucket. The bucket
-// key is `publish:<subject>` (preferred) or `publish:<ip>` (fallback).
-// Returns a PARSEC_RATE_LIMITED error when the bucket is exhausted.
-func (s *Service) gatePublish(ctx context.Context) error {
+// gatePublish charges one event against the publish bucket. The
+// channel name participates: when the operator has configured a
+// PerChannelPublish rule that matches, that rule's tighter (or
+// looser) Limit applies and the key is namespaced per-rule so two
+// rules don't share a budget. Default-bucket calls keep the original
+// `publish:<subject>` key shape.
+//
+// Malformed channel names skip per-channel resolution and fall
+// through to the default — Publish itself will reject the name
+// further down the path.
+func (s *Service) gatePublish(ctx context.Context, name string) error {
 	key := parsec.SubjectFromContext(ctx)
 	if key == "" {
 		key = parsec.RemoteIPFromContext(ctx)
@@ -189,7 +196,20 @@ func (s *Service) gatePublish(ctx context.Context) error {
 		return nil
 	}
 	override := overrideFromContext(ctx)
-	dec, err := s.p.CheckRateLimit(ctx, ratelimit.BucketPublish, key, override)
+	parsed, err := channels.ParseName(name)
+	if err != nil {
+		// Fall back to the per-subject bucket; the caller will hit
+		// ParseName again inside Publish and surface the real error.
+		dec, lerr := s.p.CheckRateLimit(ctx, ratelimit.BucketPublish, key, override)
+		if lerr != nil {
+			return errors.Wrap(errors.Internal, "rate limiter error", lerr)
+		}
+		if !dec.Allowed {
+			return errors.New(errors.RateLimited, "publish rate limit exceeded")
+		}
+		return nil
+	}
+	dec, err := s.p.CheckPublishLimit(ctx, key, parsed, override)
 	if err != nil {
 		return errors.Wrap(errors.Internal, "rate limiter error", err)
 	}

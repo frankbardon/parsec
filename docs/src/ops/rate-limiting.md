@@ -85,6 +85,50 @@ Overrides only narrow the budget — they cannot widen it past the
 operator-configured ceiling for an unauthenticated path (the token-issue
 bucket keys off IP, not the subject).
 
+## Per-channel publish ceilings
+
+Operators can tighten (or loosen) the publish bucket for individual
+channels or families of channels by mapping a channel-name pattern to
+a `Limit`. The library option is `PerChannelPublishLimits`:
+
+```go
+parsec.New(parsec.Options{
+    RateLimits: ratelimit.RateLimits{
+        Publish: ratelimit.Limit{Rate: 100, Per: time.Second, Burst: 200},
+    },
+    PerChannelPublishLimits: map[string]ratelimit.Limit{
+        // Internal metrics fanout — drown the broker without
+        // affecting other publishers.
+        "public:hot.metrics.**": {Rate: 500, Per: time.Second},
+        // Sensitive admin broadcasts — clamp to a handful per minute.
+        "private:admin.alerts.**": {Rate: 5, Per: time.Minute},
+    },
+})
+```
+
+The pattern grammar is the channel-name grammar from
+`channels.ParsePattern` (`*` matches one segment, trailing `**`
+matches any remaining segments). Invalid patterns abort
+`parsec.New` with `PARSEC_INVALID_ARGUMENT` so a typo never silently
+disables a rule.
+
+Rule selection: the **most specific** matching rule wins (literal
+segments score 4, single-star segments 1, trailing `**` 0; ties
+broken by pattern string ascending). The selected rule's `Limit`
+overrides the default `Publish` budget for the call, and the bucket
+key is namespaced `publish-channel:<pattern>:<subject>` so two rules
+on disjoint channels never share a budget. Channels that match no
+rule fall through to the default `Publish` bucket
+(`publish:<subject>`).
+
+Per-token overrides still apply on top: `auth.Claims.RateLimitOverride`
+beats both the rule and the default. Use this when a single tenant
+needs a tighter or looser ceiling on top of a global rule.
+
+Per-channel subscribe limits are not yet supported — only the publish
+path consults this configuration. A follow-up will extend the
+subscribe authorizer to consult the same rule set.
+
 ## Manifest discovery
 
 The `Manifest` RPC exposes the default budgets:
@@ -95,6 +139,22 @@ The `Manifest` RPC exposes the default budgets:
     "publish":     {"rate": 100, "per": "1s", "burst": 200},
     "subscribe":   {"rate": 20,  "per": "1s", "burst": 20},
     "token_issue": {"rate": 5,   "per": "1s", "burst": 5}
+  }
+}
+```
+
+Per-channel rules are appended under `per_channel_publish` (omitted
+when none configured):
+
+```json
+{
+  "rate_limits": {
+    "publish":     {"rate": 100, "per": "1s", "burst": 200},
+    "subscribe":   {"rate": 20,  "per": "1s", "burst": 20},
+    "token_issue": {"rate": 5,   "per": "1s", "burst": 5},
+    "per_channel_publish": [
+      {"pattern": "public:hot.metrics.**", "limit": {"rate": 500, "per": "1s", "burst": 500}}
+    ]
   }
 }
 ```
