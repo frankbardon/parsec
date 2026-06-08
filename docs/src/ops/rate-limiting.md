@@ -125,9 +125,42 @@ Per-token overrides still apply on top: `auth.Claims.RateLimitOverride`
 beats both the rule and the default. Use this when a single tenant
 needs a tighter or looser ceiling on top of a global rule.
 
-Per-channel subscribe limits are not yet supported — only the publish
-path consults this configuration. A follow-up will extend the
-subscribe authorizer to consult the same rule set.
+## Per-channel subscribe ceilings
+
+Subscribe-side limits use the same shape, configured via
+`PerChannelSubscribeLimits`:
+
+```go
+parsec.New(parsec.Options{
+    RateLimits: ratelimit.RateLimits{
+        Subscribe: ratelimit.Limit{Rate: 50, Per: time.Second},
+    },
+    PerChannelSubscribeLimits: map[string]ratelimit.Limit{
+        // Tenant-scoped channel — one subscribe per second per user.
+        "private:webapp.tenant.**":    {Rate: 1, Per: time.Second},
+        // High-frequency presence channel — relax for embed widgets.
+        "public:status.heartbeat.**":  {Rate: 200, Per: time.Second},
+    },
+})
+```
+
+Rule selection matches the publish path (most-specific wins; literal
+> single-star > trailing `**`; ties broken by pattern string). The
+bucket key is namespaced `subscribe-channel:<pattern>:<userID>`;
+channels matching no rule fall through to `subscribe:<userID>` with
+the global `Subscribe` budget. Anonymous subscribes (userID empty
+because the transport never authenticated the connection) are not
+charged — operators wanting per-IP gating for unauthenticated traffic
+should enforce it at L7. The subscribe gate runs **before** token
+verification so a flood of bad-token attempts cannot exhaust CPU on
+HMAC verifies.
+
+Per-token overrides are not consulted on the subscribe path: the
+access token's subject is the rate-limit key, and a token cannot
+loosen the operator-configured budget for its own subject. To grant
+a single user a tighter (or looser) subscribe budget than the rule
+allows, encode the tenant in the channel name and add a more-specific
+rule.
 
 ## Manifest discovery
 
@@ -143,8 +176,8 @@ The `Manifest` RPC exposes the default budgets:
 }
 ```
 
-Per-channel rules are appended under `per_channel_publish` (omitted
-when none configured):
+Per-channel rules are appended under `per_channel_publish` and
+`per_channel_subscribe` (each omitted when none configured):
 
 ```json
 {
@@ -154,6 +187,9 @@ when none configured):
     "token_issue": {"rate": 5,   "per": "1s", "burst": 5},
     "per_channel_publish": [
       {"pattern": "public:hot.metrics.**", "limit": {"rate": 500, "per": "1s", "burst": 500}}
+    ],
+    "per_channel_subscribe": [
+      {"pattern": "private:webapp.tenant.**", "limit": {"rate": 1, "per": "1s", "burst": 1}}
     ]
   }
 }

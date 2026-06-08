@@ -88,3 +88,51 @@ func TestRateLimitsEmptyHonorsPerChannel(t *testing.T) {
 		t.Fatal("RateLimits with active per-channel rule reported Empty=true")
 	}
 }
+
+func TestRateLimitsMatchSubscribePicksMostSpecific(t *testing.T) {
+	rules, err := CompileChannelRules(map[string]Limit{
+		"private:webapp.user.**":            {Rate: 100, Per: time.Second},
+		"private:webapp.user.42.financials": {Rate: 1, Per: time.Second},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rl := RateLimits{
+		Subscribe:           Limit{Rate: 1000, Per: time.Second},
+		PerChannelSubscribe: rules,
+	}.Normalize()
+
+	name, err := channels.ParseName("private:webapp.user.42.financials")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, raw := rl.MatchSubscribe(name)
+	if got.Rate != 1 {
+		t.Fatalf("rate=%d, want 1 (specific rule)", got.Rate)
+	}
+	if raw != "private:webapp.user.42.financials" {
+		t.Fatalf("raw=%q", raw)
+	}
+
+	other, _ := channels.ParseName("public:cold.audit.feed")
+	got2, raw2 := rl.MatchSubscribe(other)
+	if got2.Rate != 1000 {
+		t.Fatalf("default rate=%d, want 1000", got2.Rate)
+	}
+	if raw2 != "" {
+		t.Fatalf("raw=%q, want empty", raw2)
+	}
+}
+
+func TestRateLimitsEmptyHonorsPerChannelSubscribe(t *testing.T) {
+	rules, err := CompileChannelRules(map[string]Limit{
+		"private:webapp.user.**": {Rate: 5, Per: time.Second},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rl := RateLimits{PerChannelSubscribe: rules}
+	if rl.Empty() {
+		t.Fatal("RateLimits with active per-channel subscribe rule reported Empty=true")
+	}
+}

@@ -200,6 +200,14 @@ type Options struct {
 	// hot channel cannot drain the global publish budget.
 	PerChannelPublishLimits map[string]ratelimit.Limit
 
+	// PerChannelSubscribeLimits mirrors PerChannelPublishLimits for the
+	// subscribe bucket. The subscribe authorizer resolves the most-
+	// specific rule on every subscribe attempt; the per-rule key is
+	// namespaced (`subscribe-channel:<rule-raw>:<subject>`) so a hot
+	// channel cannot drain the global subscribe budget. An invalid
+	// pattern aborts startup with PARSEC_INVALID_ARGUMENT.
+	PerChannelSubscribeLimits map[string]ratelimit.Limit
+
 	// OIDCConfig, when non-nil, enables the OIDC bridge: management
 	// RPC requests carrying an IdP-issued ID token bearer are
 	// translated into a synthetic mgmt Claims and accepted alongside
@@ -382,11 +390,21 @@ func New(opts Options) (*Parsec, error) {
 		return nil, perr.Wrap(perr.InvalidArgument, "per-channel publish limit", err)
 	}
 	opts.RateLimits.PerChannelPublish = rules
+	subRules, err := ratelimit.CompileChannelRules(opts.PerChannelSubscribeLimits)
+	if err != nil {
+		return nil, perr.Wrap(perr.InvalidArgument, "per-channel subscribe limit", err)
+	}
+	opts.RateLimits.PerChannelSubscribe = subRules
 	// Resolve the rate limiter: explicit > built-from-RateLimits.
 	limiter, rl := resolveLimiter(opts)
+	m := metrics.NewWithRegistryAndRegion(opts.MetricsRegistry, opts.Region)
 	manager := buildManager(opts, logger)
 	if opts.BrokerOptions.SubscribeAuthorizer == nil {
-		tokenAuth := auth.NewSubscribeAuthorizerWithLimiter(verifier, limiter, rl.Subscribe)
+		// Build a per-channel rate gate that resolves the most-specific
+		// subscribe rule and namespaces the bucket key. Mirrors
+		// CheckSubscribeLimit but reachable before the *Parsec is built.
+		gate := buildSubscribeGate(limiter, rl, m)
+		tokenAuth := auth.NewSubscribeAuthorizerWithGate(verifier, gate)
 		revStore := opts.RevocationStore
 		opts.BrokerOptions.SubscribeAuthorizer = func(ctx context.Context, userID string, ch channels.Name, event centrifuge.SubscribeEvent) error {
 			if !manager.IsOpen(ch) {
@@ -426,7 +444,6 @@ func New(opts Options) (*Parsec, error) {
 			return nil
 		}
 	}
-	m := metrics.NewWithRegistryAndRegion(opts.MetricsRegistry, opts.Region)
 	verifier.OnVerify = func(parsed, expected auth.Type, verr error) {
 		// Use expected when the parse failed before payload decode (typ
 		// is empty) so we never tag with the empty label value.
@@ -712,6 +729,66 @@ func resolveLimiter(opts Options) (ratelimit.Limiter, ratelimit.RateLimits) {
 	return ratelimit.NewMemoryLimiter(widest), rl
 }
 
+// buildSubscribeGate returns the per-subscribe rate-limit callback used
+// by the broker's SubscribeAuthorizer. It honors PerChannelSubscribe
+// rules (most-specific first) and namespaces the bucket key per rule so
+// a hot channel cannot drain the global subscribe budget. Anonymous
+// subscribes (userID empty) are not charged — operators wanting per-IP
+// gating should run behind an L7 proxy.
+//
+// Returns nil when no limiter is wired or every subscribe budget is
+// unlimited; callers feed that into NewSubscribeAuthorizerWithGate
+// which interprets nil as "no gate".
+func buildSubscribeGate(limiter ratelimit.Limiter, rl ratelimit.RateLimits, m *metrics.Metrics) auth.SubscribeRateGate {
+	if limiter == nil {
+		return nil
+	}
+	defaultUnlimited := rl.Subscribe.Unlimited()
+	anyRule := len(rl.PerChannelSubscribe) > 0
+	if defaultUnlimited && !anyRule {
+		return nil
+	}
+	return func(ctx context.Context, userID string, ch channels.Name) error {
+		if userID == "" {
+			return nil
+		}
+		effective, ruleRaw := rl.MatchSubscribe(ch)
+		if effective.Unlimited() {
+			return nil
+		}
+		bucket := ratelimit.BucketSubscribe
+		keyPrefix := bucket
+		if ruleRaw != "" {
+			keyPrefix = bucket + "-channel:" + ruleRaw
+		}
+		key := keyPrefix + ":" + userID
+		type withLimit interface {
+			AllowWithLimit(ctx context.Context, key string, n int, lim ratelimit.Limit) (ratelimit.Decision, error)
+		}
+		var dec ratelimit.Decision
+		var err error
+		if w, ok := limiter.(withLimit); ok {
+			dec, err = w.AllowWithLimit(ctx, key, 1, effective)
+		} else {
+			dec, err = limiter.Allow(ctx, key, 1)
+		}
+		if err != nil {
+			return perr.Wrap(perr.Internal, "rate limiter error", err)
+		}
+		result := "allowed"
+		if !dec.Allowed {
+			result = "denied"
+		}
+		if m != nil && m.RateLimitDecisions != nil {
+			m.RateLimitDecisions.WithLabelValues(bucket, result).Inc()
+		}
+		if !dec.Allowed {
+			return perr.New(perr.RateLimited, "subscribe rate limit exceeded")
+		}
+		return nil
+	}
+}
+
 // widestLimit returns the per-bucket limit with the highest burst ceiling.
 // A single MemoryLimiter / RedisLimiter is shared across buckets and keys
 // are namespaced with the bucket prefix; the limiter must therefore allow
@@ -724,6 +801,9 @@ func widestLimit(rl ratelimit.RateLimits) ratelimit.Limit {
 	best := ratelimit.Limit{}
 	candidates := []ratelimit.Limit{rl.Publish, rl.Subscribe, rl.TokenIssue}
 	for _, r := range rl.PerChannelPublish {
+		candidates = append(candidates, r.Limit)
+	}
+	for _, r := range rl.PerChannelSubscribe {
 		candidates = append(candidates, r.Limit)
 	}
 	for _, l := range candidates {
@@ -817,6 +897,57 @@ func (p *Parsec) CheckPublishLimit(ctx context.Context, subject string, channel 
 		// Distinct prefix per rule so two rules' subjects don't share
 		// a key. The rule raw string is part of operator config, so
 		// it's bounded cardinality.
+		keyPrefix = bucket + "-channel:" + ruleRaw
+	}
+	key := keyPrefix + ":" + subject
+	type withLimit interface {
+		AllowWithLimit(ctx context.Context, key string, n int, lim ratelimit.Limit) (ratelimit.Decision, error)
+	}
+	var dec ratelimit.Decision
+	var err error
+	if w, ok := p.limiter.(withLimit); ok {
+		dec, err = w.AllowWithLimit(ctx, key, 1, effective)
+	} else {
+		dec, err = p.limiter.Allow(ctx, key, 1)
+	}
+	if err != nil {
+		return ratelimit.Decision{}, err
+	}
+	result := "allowed"
+	if !dec.Allowed {
+		result = "denied"
+	}
+	if p.metrics != nil && p.metrics.RateLimitDecisions != nil {
+		p.metrics.RateLimitDecisions.WithLabelValues(bucket, result).Inc()
+	}
+	return dec, nil
+}
+
+// CheckSubscribeLimit is CheckRateLimit specialised for the subscribe
+// bucket with per-channel rule resolution. The channel's name is
+// matched against the operator's PerChannelSubscribe rules and the
+// most-specific match wins; when no rule matches, the global subscribe
+// default applies. override is honored when tighter (or when the
+// default + matched rule are both unlimited).
+//
+// Bucket keys mirror CheckPublishLimit: rule-matched calls use
+// `subscribe-channel:<rule-raw>:<subject>`, default calls use
+// `subscribe:<subject>`. Per-rule namespacing prevents a hot channel's
+// subscribers from eating the global subscribe budget.
+func (p *Parsec) CheckSubscribeLimit(ctx context.Context, subject string, channel channels.Name, override *ratelimit.Limit) (ratelimit.Decision, error) {
+	if p.limiter == nil {
+		return ratelimit.AllowDecisionUnlimited, nil
+	}
+	effective, ruleRaw := p.rateLimits.MatchSubscribe(channel)
+	if override != nil && !override.Unlimited() {
+		effective = override.Normalize()
+	}
+	if effective.Unlimited() {
+		return ratelimit.AllowDecisionUnlimited, nil
+	}
+	bucket := ratelimit.BucketSubscribe
+	keyPrefix := bucket
+	if ruleRaw != "" {
 		keyPrefix = bucket + "-channel:" + ruleRaw
 	}
 	key := keyPrefix + ":" + subject

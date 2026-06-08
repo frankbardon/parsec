@@ -105,6 +105,11 @@ type RateLimits struct {
 	// dispatcher picks the most-specific matching rule per call. Empty
 	// = no overrides, every channel falls through to Publish.
 	PerChannelPublish []ChannelRule `json:"per_channel_publish,omitempty"`
+	// PerChannelSubscribe mirrors PerChannelPublish for the subscribe
+	// bucket: a channel-name pattern can carry a tighter (or looser)
+	// per-subject subscribe budget than the global default. Empty = no
+	// overrides, every subscribe attempt falls through to Subscribe.
+	PerChannelSubscribe []ChannelRule `json:"per_channel_subscribe,omitempty"`
 }
 
 // ChannelRule binds a channel-name pattern to a Limit. Used by the
@@ -197,16 +202,36 @@ func (rl RateLimits) MatchPublish(channel channels.Name) (Limit, string) {
 	return rl.Publish, ""
 }
 
+// MatchSubscribe returns the Limit + matched rule's raw string for
+// channel, or (Subscribe, "") when no per-channel rule matches. The
+// rule list is pre-sorted most-specific first so the first match wins.
+func (rl RateLimits) MatchSubscribe(channel channels.Name) (Limit, string) {
+	for _, rule := range rl.PerChannelSubscribe {
+		if rule.Pattern.Matches(channel) {
+			return rule.Limit, rule.Raw
+		}
+	}
+	return rl.Subscribe, ""
+}
+
 // Normalize returns rl with every Limit normalized.
 func (rl RateLimits) Normalize() RateLimits {
 	out := RateLimits{
-		Publish:           rl.Publish.Normalize(),
-		Subscribe:         rl.Subscribe.Normalize(),
-		TokenIssue:        rl.TokenIssue.Normalize(),
-		PerChannelPublish: make([]ChannelRule, len(rl.PerChannelPublish)),
+		Publish:             rl.Publish.Normalize(),
+		Subscribe:           rl.Subscribe.Normalize(),
+		TokenIssue:          rl.TokenIssue.Normalize(),
+		PerChannelPublish:   make([]ChannelRule, len(rl.PerChannelPublish)),
+		PerChannelSubscribe: make([]ChannelRule, len(rl.PerChannelSubscribe)),
 	}
 	for i, r := range rl.PerChannelPublish {
 		out.PerChannelPublish[i] = ChannelRule{
+			Pattern: r.Pattern,
+			Raw:     r.Raw,
+			Limit:   r.Limit.Normalize(),
+		}
+	}
+	for i, r := range rl.PerChannelSubscribe {
+		out.PerChannelSubscribe[i] = ChannelRule{
 			Pattern: r.Pattern,
 			Raw:     r.Raw,
 			Limit:   r.Limit.Normalize(),
@@ -221,6 +246,11 @@ func (rl RateLimits) Empty() bool {
 		return false
 	}
 	for _, r := range rl.PerChannelPublish {
+		if !r.Limit.Unlimited() {
+			return false
+		}
+	}
+	for _, r := range rl.PerChannelSubscribe {
 		if !r.Limit.Unlimited() {
 			return false
 		}
@@ -249,16 +279,22 @@ func (rl RateLimits) MarshalJSON() ([]byte, error) {
 	for _, r := range rl.PerChannelPublish {
 		pc = append(pc, perChannel{Pattern: r.Raw, Limit: render(r.Limit)})
 	}
+	var sc []perChannel
+	for _, r := range rl.PerChannelSubscribe {
+		sc = append(sc, perChannel{Pattern: r.Raw, Limit: render(r.Limit)})
+	}
 	return json.Marshal(struct {
-		Publish           bucket       `json:"publish"`
-		Subscribe         bucket       `json:"subscribe"`
-		TokenIssue        bucket       `json:"token_issue"`
-		PerChannelPublish []perChannel `json:"per_channel_publish,omitempty"`
+		Publish             bucket       `json:"publish"`
+		Subscribe           bucket       `json:"subscribe"`
+		TokenIssue          bucket       `json:"token_issue"`
+		PerChannelPublish   []perChannel `json:"per_channel_publish,omitempty"`
+		PerChannelSubscribe []perChannel `json:"per_channel_subscribe,omitempty"`
 	}{
-		Publish:           render(rl.Publish),
-		Subscribe:         render(rl.Subscribe),
-		TokenIssue:        render(rl.TokenIssue),
-		PerChannelPublish: pc,
+		Publish:             render(rl.Publish),
+		Subscribe:           render(rl.Subscribe),
+		TokenIssue:          render(rl.TokenIssue),
+		PerChannelPublish:   pc,
+		PerChannelSubscribe: sc,
 	})
 }
 

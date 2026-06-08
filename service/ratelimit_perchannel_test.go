@@ -188,6 +188,65 @@ func TestPerChannel_ManifestExposesRules(t *testing.T) {
 	}
 }
 
+func TestPerChannelSubscribe_ManifestExposesRules(t *testing.T) {
+	svc := newPerChannelSubscribeService(t, map[string]ratelimit.Limit{
+		"private:webapp.hot.**": {Rate: 5, Per: time.Second},
+	})
+	env := svc.Manifest(context.Background())
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(b)
+	if !strings.Contains(body, `"per_channel_subscribe"`) {
+		t.Fatalf("manifest missing per_channel_subscribe: %s", body)
+	}
+	if !strings.Contains(body, `"private:webapp.hot.**"`) {
+		t.Fatalf("manifest missing subscribe rule pattern: %s", body)
+	}
+}
+
+// newPerChannelSubscribeService mirrors newPerChannelService but wires
+// the rule against the subscribe bucket.
+func newPerChannelSubscribeService(t *testing.T, perChannel map[string]ratelimit.Limit) *service.Service {
+	t.Helper()
+	secret, err := auth.GenerateSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ring, err := auth.NewKeyRingFromSecret(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := parsec.New(parsec.Options{
+		KeyRing:       ring,
+		SweepInterval: 50 * time.Millisecond,
+		Logger:        slog.New(slog.DiscardHandler),
+		RateLimits: ratelimit.RateLimits{
+			Subscribe: ratelimit.Limit{Rate: 50, Per: time.Second},
+		},
+		PerChannelSubscribeLimits: perChannel,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var done atomic.Bool
+	doneCh := make(chan struct{})
+	go func() {
+		_ = p.Run(ctx)
+		done.Store(true)
+		close(doneCh)
+	}()
+	time.Sleep(75 * time.Millisecond)
+	svc := service.New(p, "test-0.0.0")
+	t.Cleanup(func() {
+		cancel()
+		<-doneCh
+	})
+	return svc
+}
+
 func isRateLimited(err error) bool {
 	if err == nil {
 		return false
