@@ -61,6 +61,8 @@ type Metrics struct {
 	RPCDuration            *prometheus.HistogramVec
 	RateLimitDecisions     *prometheus.CounterVec
 	RefreshRotations       *prometheus.CounterVec
+	CacheOperations        *prometheus.CounterVec
+	CacheSize              *prometheus.GaugeVec
 }
 
 // New constructs a fresh Metrics bundle backed by a fresh registry. The
@@ -160,12 +162,21 @@ func NewWithRegistryAndRegion(reg *prometheus.Registry, region string) *Metrics 
 			Name: "parsec_refresh_rotations_total",
 			Help: "Refresh-token rotation outcomes (rotated, reused, family_revoked, legacy).",
 		}, []string{"result"}),
+		CacheOperations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "parsec_cache_operations_total",
+			Help: "Request-hash cache operations by op (get/put/delete) and result (hit/miss/success/failure).",
+		}, []string{"op", "result"}),
+		CacheSize: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "parsec_cache_size_entries",
+			Help: "Approximate cache entry count by backend (memory/redis/noop/custom). Sampled at observation time.",
+		}, []string{"backend"}),
 	}
 	for _, c := range []prometheus.Collector{
 		m.PublishesTotal, m.PublishDuration, m.SubscribersActive, m.ChannelsActive,
 		m.TokenVerificationTotal, m.SinkAttemptsTotal, m.SinkDuration, m.DLQSize,
 		m.KeyRotationsTotal, m.RPCRequestsTotal, m.RPCDuration,
 		m.RateLimitDecisions, m.RefreshRotations,
+		m.CacheOperations, m.CacheSize,
 	} {
 		// Skip duplicate registrations — callers may share a registry
 		// across two Metrics bundles in tests.

@@ -37,6 +37,7 @@ import (
 
 	"github.com/frankbardon/parsec/auth"
 	"github.com/frankbardon/parsec/broker"
+	"github.com/frankbardon/parsec/cache"
 	"github.com/frankbardon/parsec/channels"
 	perr "github.com/frankbardon/parsec/errors"
 	"github.com/frankbardon/parsec/internal/metrics"
@@ -253,6 +254,20 @@ type Options struct {
 	// and serves the aggregated JSON snapshot. The native /metrics
 	// Prometheus endpoint is unaffected.
 	TelemetryHandler http.Handler
+
+	// Cache, when non-nil, is the request-hash cache exposed to
+	// embedder code via Parsec.Cache(). Parsec itself does NOT
+	// consult this cache on the hot path — the field exists so
+	// embedders share one cache instance across the library, the
+	// telemetry source, and any sinks/handlers they wire. Leave
+	// nil to disable; pass cache.NewMemoryCache or cache.NewRedisCache
+	// to enable.
+	//
+	// When nil and RedisClient is set, parsec.New auto-builds a
+	// cache.RedisCache against the same client (sharing the
+	// connection pool). Pass an explicit cache.NoopCache instance
+	// to opt out of the auto-build.
+	Cache cache.Cache
 }
 
 // OIDCEnabled reports whether the OIDC bridge is configured. Convenience
@@ -288,6 +303,8 @@ type Parsec struct {
 	rateLimits ratelimit.RateLimits
 
 	refreshStore auth.RefreshStore
+
+	cache cache.Cache
 }
 
 // New constructs a Parsec instance. The broker is created but not started;
@@ -502,6 +519,7 @@ func New(opts Options) (*Parsec, error) {
 		limiter:        limiter,
 		rateLimits:     rl,
 		refreshStore:   refreshStore,
+		cache:          metrics.WrapCache(buildCache(opts), m),
 	}
 	// Replace the user-supplied registry pointer with the wrapped one so
 	// PublishOrSink and Sinks() see the retry-aware shape.
@@ -552,6 +570,26 @@ func buildRefreshStore(opts Options) auth.RefreshStore {
 		interval = 5 * time.Minute
 	}
 	return auth.NewMemoryRefreshStore(interval)
+}
+
+// buildCache returns the cache to expose via Parsec.Cache(). The
+// default rule: when the embedder set an explicit Options.Cache,
+// honor it; otherwise build a RedisCache against the configured
+// RedisClient; otherwise leave nil (cache disabled — Parsec.Cache()
+// returns nil). Embedders that want Redis off even though a client
+// is wired pass cache.NewNoopCache().
+func buildCache(opts Options) cache.Cache {
+	if opts.Cache != nil {
+		return opts.Cache
+	}
+	if opts.RedisClient != nil {
+		prefix := opts.RedisKeyPrefix
+		if prefix == "" {
+			prefix = "parsec"
+		}
+		return cache.NewRedisCache(opts.RedisClient, prefix+":cache")
+	}
+	return nil
 }
 
 // buildDLQ returns the DLQ to thread through retry-wrapping. The default
@@ -1052,6 +1090,18 @@ func (p *Parsec) TokenBrokerHandler() http.Handler { return p.opts.TokenBrokerHa
 // authorizer consults on every private channel subscribe. Used by the
 // manifest layer to surface the on/off state to operators.
 func (p *Parsec) RevocationStore() tokenbroker.RevocationStore { return p.opts.RevocationStore }
+
+// Cache returns the configured request-hash cache, or nil when no
+// cache was wired (the default). Embedders share this instance so the
+// library, the telemetry source, and any sinks/handlers consult one
+// view of cached state. See docs/src/ops/cache.md.
+func (p *Parsec) Cache() cache.Cache { return p.cache }
+
+// CacheBackend reports the cache implementation in use: "" when no
+// cache is wired, "memory" / "redis" / "noop" for the bundled
+// impls, and "custom" for an embedder-supplied Cache. Surfaced in
+// the manifest.
+func (p *Parsec) CacheBackend() string { return cache.Backend(p.cache) }
 
 // TelemetryHandler returns the optional aggregated /parsec/metrics
 // handler, or nil when telemetry aggregation is not wired.

@@ -62,6 +62,7 @@
 - [Asymmetric Signing (RS256 / EdDSA)](ops/asymmetric-signing.md)
 - [OIDC Bridge](ops/oidc.md)
 - [Token Broker](ops/token-broker.md)
+- [Request-Hash Cache](ops/cache.md)
 - [Observability](ops/observability.md)
 - [Telemetry Alerts & Prometheus Exposition](ops/telemetry-alerts.md)
 - [Dead-Letter Queue](ops/dlq.md)

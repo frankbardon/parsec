@@ -71,6 +71,8 @@ func (s *Service) Manifest(ctx context.Context) descriptor.Envelope {
 		AuthOIDCIssuer:         s.p.OIDCIssuer(),
 		TokenBrokerEnabled:     s.p.TokenBrokerHandler() != nil,
 		RevocationStoreEnabled: s.p.RevocationStore() != nil,
+		CacheEnabled:           s.p.Cache() != nil,
+		CacheBackend:           s.p.CacheBackend(),
 	}
 	return descriptor.NewEnvelope("parsec.manifest", m)
 }

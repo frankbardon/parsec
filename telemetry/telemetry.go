@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/frankbardon/parsec/cache"
 )
 
 // ChannelStats is the per-pattern aggregate.
@@ -264,6 +266,32 @@ type CacheSource struct {
 // NewCacheSource constructs a CacheSource over the supplied stat func.
 func NewCacheSource(stats func() cacheStats) *CacheSource {
 	return &CacheSource{Stats: stats}
+}
+
+// NewCacheSourceFromCache adapts a cache.Cache to a Source by wiring
+// its Stats() call into the CacheSource closure. The embedder shares
+// one cache instance across the library and the telemetry aggregator
+// without writing the adapter by hand.
+//
+// Returns nil when c is nil so callers can compose blindly:
+//
+//	agg := telemetry.New(other..., telemetry.NewCacheSourceFromCache(p.Cache()))
+//
+// will silently drop the cache source when the cache is disabled.
+func NewCacheSourceFromCache(c cache.Cache) *CacheSource {
+	if c == nil {
+		return nil
+	}
+	return NewCacheSource(func() cacheStats {
+		s := c.Stats()
+		return cacheStats{
+			Hits:        s.Hits,
+			Misses:      s.Misses,
+			Puts:        s.Puts,
+			Evictions:   s.Evictions,
+			SizeEntries: s.SizeEntries,
+		}
+	})
 }
 
 func (s *CacheSource) Channels(context.Context) ChannelStats   { return ChannelStats{} }
