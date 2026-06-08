@@ -2,7 +2,9 @@ package auth
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -16,30 +18,41 @@ import (
 )
 
 // Alg names a token-signing algorithm. The default is HS256 (HMAC over
-// a 32-byte secret); RS256 and EdDSA are the asymmetric alternatives.
-// The set is closed — adding a new alg requires a verifier branch and
-// snapshot-format support.
+// a 32-byte secret); RS256, EdDSA, ES256, and ES384 are the asymmetric
+// alternatives. The set is closed — adding a new alg requires a
+// verifier branch and snapshot-format support.
 type Alg string
 
 const (
 	AlgHS256 Alg = "HS256"
 	AlgRS256 Alg = "RS256"
 	AlgEdDSA Alg = "EdDSA"
+	AlgES256 Alg = "ES256"
+	AlgES384 Alg = "ES384"
 )
 
 // SupportedAlgs returns the algs Parsec can sign and verify, in the
 // preferred order operators see them in CLI help. Exposed for the
 // manifest layer.
-func SupportedAlgs() []Alg { return []Alg{AlgHS256, AlgEdDSA, AlgRS256} }
+func SupportedAlgs() []Alg {
+	return []Alg{AlgHS256, AlgEdDSA, AlgES256, AlgES384, AlgRS256}
+}
 
 // IsAsymmetric reports whether a is one of the public-key algs. HMAC
 // keys are symmetric and are NEVER exposed via the JWKS endpoint.
-func (a Alg) IsAsymmetric() bool { return a == AlgRS256 || a == AlgEdDSA }
+func (a Alg) IsAsymmetric() bool {
+	switch a {
+	case AlgRS256, AlgEdDSA, AlgES256, AlgES384:
+		return true
+	default:
+		return false
+	}
+}
 
 // Valid returns nil if a is one of the supported algs.
 func (a Alg) Valid() error {
 	switch a {
-	case AlgHS256, AlgRS256, AlgEdDSA:
+	case AlgHS256, AlgRS256, AlgEdDSA, AlgES256, AlgES384:
 		return nil
 	default:
 		return fmt.Errorf("auth: unsupported alg %q", a)
@@ -199,6 +212,10 @@ func (r *KeyRing) GenerateAlg(alg Alg) (Key, error) {
 		return r.GenerateEd25519()
 	case AlgRS256:
 		return r.GenerateRSA(2048)
+	case AlgES256:
+		return r.GenerateECDSA(elliptic.P256())
+	case AlgES384:
+		return r.GenerateECDSA(elliptic.P384())
 	default:
 		return Key{}, alg.Valid()
 	}
@@ -281,6 +298,65 @@ func (r *KeyRing) AddEd25519(id string, priv ed25519.PrivateKey) (Key, error) {
 		return Key{}, fmt.Errorf("auth: ed25519 private key wrong size: %d", l)
 	}
 	return r.addAsymmetric(id, AlgEdDSA, priv, priv.Public())
+}
+
+// GenerateECDSA creates a fresh ECDSA keypair on curve and installs it.
+// Only P-256 (ES256) and P-384 (ES384) are supported — JOSE does not
+// define a canonical signing form for other curves. P-521 is excluded
+// because variable-length JOSE signatures would complicate the wire
+// format; operators wanting larger keys should use RSA.
+func (r *KeyRing) GenerateECDSA(curve elliptic.Curve) (Key, error) {
+	alg, err := algForCurve(curve)
+	if err != nil {
+		return Key{}, err
+	}
+	id, err := newKeyID()
+	if err != nil {
+		return Key{}, err
+	}
+	priv, err := ecdsa.GenerateKey(curve, rand.Reader)
+	if err != nil {
+		return Key{}, fmt.Errorf("auth: ecdsa generate: %w", err)
+	}
+	return r.addAsymmetric(id, alg, priv, &priv.PublicKey)
+}
+
+// AddECDSA installs an ECDSA private key into the ring. The curve must
+// be P-256 or P-384.
+func (r *KeyRing) AddECDSA(id string, priv *ecdsa.PrivateKey) (Key, error) {
+	if priv == nil {
+		return Key{}, errors.New("auth: nil ECDSA private key")
+	}
+	alg, err := algForCurve(priv.Curve)
+	if err != nil {
+		return Key{}, err
+	}
+	return r.addAsymmetric(id, alg, priv, &priv.PublicKey)
+}
+
+// algForCurve maps an EC curve to its JOSE Alg. Only NIST P-256 and
+// P-384 are accepted; everything else errors so a 521-bit key cannot
+// silently install as ES256.
+func algForCurve(curve elliptic.Curve) (Alg, error) {
+	switch curve {
+	case elliptic.P256():
+		return AlgES256, nil
+	case elliptic.P384():
+		return AlgES384, nil
+	default:
+		return "", fmt.Errorf("auth: ecdsa curve %s not supported (use P-256 or P-384)", curveName(curve))
+	}
+}
+
+// curveName returns a human-readable curve label for error messages.
+func curveName(curve elliptic.Curve) string {
+	if curve == nil {
+		return "<nil>"
+	}
+	if p := curve.Params(); p != nil {
+		return p.Name
+	}
+	return "<unknown>"
 }
 
 // AddRSA installs an RSA private key into the ring. The caller must
@@ -432,6 +508,12 @@ func (r *KeyRing) Snapshot() Snapshot {
 					entry.PrivatePEM = encodePEM("PRIVATE KEY", blob)
 				}
 			}
+		case AlgES256, AlgES384:
+			if priv, ok := k.Private.(*ecdsa.PrivateKey); ok {
+				if blob, err := x509.MarshalPKCS8PrivateKey(priv); err == nil {
+					entry.PrivatePEM = encodePEM("PRIVATE KEY", blob)
+				}
+			}
 		}
 		if k.RetiredAt != nil {
 			entry.RetiredAt = k.RetiredAt.UTC().Format(time.RFC3339Nano)
@@ -479,7 +561,7 @@ func (r *KeyRing) LoadSnapshot(s Snapshot) error {
 				return fmt.Errorf("auth: snapshot key %q: secret too short", e.ID)
 			}
 			k.Secret = secret
-		case AlgRS256, AlgEdDSA:
+		case AlgRS256, AlgEdDSA, AlgES256, AlgES384:
 			if e.PrivatePEM == "" {
 				return fmt.Errorf("auth: snapshot key %q: missing private_pem", e.ID)
 			}
@@ -536,6 +618,21 @@ func decodePrivatePEM(s string, alg Alg) (crypto.Signer, crypto.PublicKey, error
 			return nil, nil, fmt.Errorf("private_pem: expected RSA, got %T", priv)
 		}
 		return rk, &rk.PublicKey, nil
+	case AlgES256, AlgES384:
+		ek, ok := priv.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, nil, fmt.Errorf("private_pem: expected ECDSA, got %T", priv)
+		}
+		// Defend against an operator hand-editing a snapshot to swap
+		// curves: the curve on disk must match the declared alg.
+		expected, err := algForCurve(ek.Curve)
+		if err != nil {
+			return nil, nil, fmt.Errorf("private_pem: %w", err)
+		}
+		if expected != alg {
+			return nil, nil, fmt.Errorf("private_pem: alg %s but curve %s", alg, expected)
+		}
+		return ek, &ek.PublicKey, nil
 	default:
 		return nil, nil, fmt.Errorf("private_pem: alg %s not asymmetric", alg)
 	}

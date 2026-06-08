@@ -70,7 +70,7 @@ func keysGenerateCommand() *ucli.Command {
 			&ucli.StringFlag{
 				Name:  "alg",
 				Value: "hs256",
-				Usage: "Signing algorithm: hs256 (default), rs256, eddsa",
+				Usage: "Signing algorithm: hs256 (default), rs256, eddsa, es256, es384",
 			},
 		},
 		Action: func(ctx context.Context, cmd *ucli.Command) error {
@@ -94,6 +94,10 @@ func normalizeAlg(s string) string {
 		return "RS256"
 	case "eddsa", "ed25519":
 		return "EdDSA"
+	case "es256":
+		return "ES256"
+	case "es384":
+		return "ES384"
 	default:
 		return s
 	}

@@ -148,7 +148,7 @@ authenticates with the user's own bearer via the broker's
 when no `RevocationStore` is wired so misconfiguration fails loudly
 instead of no-op'ing.
 
-### Auth is JWT with `kid`-based key rotation; HS256 default, RS256/EdDSA optional
+### Auth is JWT with `kid`-based key rotation; HS256 default, RS256/EdDSA/ES256/ES384 optional
 The `auth/` package mints three token types:
 
 | Type | TTL default | Purpose |
@@ -158,17 +158,20 @@ The `auth/` package mints three token types:
 | `mgmt` | 24h (clamped [1h, 7d]) | `Authorization: Bearer` on the management RPC |
 
 Tokens are compact JWTs. The JOSE header is **fixed per key** —
-`{"alg":"<HS256|RS256|EdDSA>","kid":"<kid>","typ":"JWT"}`. The
-verifier refuses any unknown `alg`/`typ`, refuses tokens without a
-`kid`, and refuses tokens whose declared `alg` does not match the
+`{"alg":"<HS256|RS256|EdDSA|ES256|ES384>","kid":"<kid>","typ":"JWT"}`.
+The verifier refuses any unknown `alg`/`typ`, refuses tokens without
+a `kid`, and refuses tokens whose declared `alg` does not match the
 algorithm of the key the `kid` points to (defends against key
-confusion). The `kid` is looked up in a `KeyRing` to fetch the
-verifying key material.
+confusion). For ECDSA the verifier also rejects signatures whose
+length isn't exactly `2 * curve coord size` so a DER-shaped
+signature cannot be smuggled in. The `kid` is looked up in a
+`KeyRing` to fetch the verifying key material.
 
 The KeyRing holds N≥1 keys, exactly one with role `active` (the
-signer). Each key carries an `Alg` (HS256 / RS256 / EdDSA); a single
-ring can mix algorithms. Others are `verify-only`. Retired keys stop
-verifying immediately and drop from the next snapshot.
+signer). Each key carries an `Alg` (HS256 / RS256 / EdDSA / ES256 /
+ES384); a single ring can mix algorithms. Others are `verify-only`.
+Retired keys stop verifying immediately and drop from the next
+snapshot.
 
 Asymmetric public keys are exposed via JWKS at `/parsec/jwks.json`
 when at least one non-retired asymmetric key is in the ring. HMAC
