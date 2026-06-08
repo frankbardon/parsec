@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
 	"encoding/base64"
@@ -40,9 +41,11 @@ type JWK struct {
 	Kid string `json:"kid"`
 	Alg string `json:"alg"`
 	Use string `json:"use"`
-	// EdDSA (OKP)
+	// EdDSA (OKP) and ECDSA (EC)
 	Crv string `json:"crv,omitempty"`
 	X   string `json:"x,omitempty"`
+	// ECDSA y coordinate (EC only — OKP keys are single-coord)
+	Y string `json:"y,omitempty"`
 	// RSA
 	N string `json:"n,omitempty"`
 	E string `json:"e,omitempty"`
@@ -94,10 +97,41 @@ func keyToJWK(k Key) (JWK, bool) {
 			N:   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
 			E:   encodeRSAExponent(pub.E),
 		}, true
+	case AlgES256, AlgES384:
+		pub, ok := k.Public.(*ecdsa.PublicKey)
+		if !ok {
+			return JWK{}, false
+		}
+		// pub.Bytes returns the SEC1 uncompressed form: 0x04 || X || Y
+		// with each coordinate already fixed-width. Strip the 0x04 prefix
+		// and split — avoids touching the deprecated big.Int accessors.
+		raw, err := pub.Bytes()
+		if err != nil || len(raw) < 1 || raw[0] != 0x04 {
+			return JWK{}, false
+		}
+		coords := raw[1:]
+		if len(coords)%2 != 0 {
+			return JWK{}, false
+		}
+		coordSize := len(coords) / 2
+		crv := "P-256"
+		if k.Alg == AlgES384 {
+			crv = "P-384"
+		}
+		return JWK{
+			Kty: "EC",
+			Kid: k.ID,
+			Alg: string(k.Alg),
+			Use: "sig",
+			Crv: crv,
+			X:   base64.RawURLEncoding.EncodeToString(coords[:coordSize]),
+			Y:   base64.RawURLEncoding.EncodeToString(coords[coordSize:]),
+		}, true
 	default:
 		return JWK{}, false
 	}
 }
+
 
 // encodeRSAExponent renders an RSA public exponent in JWS-canonical
 // base64url form (RFC 7518 §6.3.1.2): big-endian, minimum-length

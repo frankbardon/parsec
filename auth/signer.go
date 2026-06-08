@@ -2,11 +2,13 @@ package auth
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -117,8 +119,46 @@ func signWith(k Key, msg []byte) ([]byte, error) {
 			return nil, fmt.Errorf("auth: key %q has alg %s but non-Ed25519 private key", k.ID, alg)
 		}
 		return ed25519.Sign(priv, msg), nil
+	case AlgES256, AlgES384:
+		priv, ok := k.Private.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("auth: key %q has alg %s but non-ECDSA private key", k.ID, alg)
+		}
+		digest, coordSize, err := ecdsaDigest(alg, msg)
+		if err != nil {
+			return nil, err
+		}
+		r, s, err := ecdsa.Sign(rand.Reader, priv, digest)
+		if err != nil {
+			return nil, fmt.Errorf("auth: ecdsa sign: %w", err)
+		}
+		// JOSE encoding: fixed-width big-endian r||s (RFC 7515 §3.4).
+		// Pad each component with leading zeros to coordSize bytes.
+		out := make([]byte, 2*coordSize)
+		rb := r.Bytes()
+		sb := s.Bytes()
+		copy(out[coordSize-len(rb):coordSize], rb)
+		copy(out[2*coordSize-len(sb):], sb)
+		return out, nil
 	default:
 		return nil, fmt.Errorf("auth: cannot sign with alg %q", alg)
+	}
+}
+
+// ecdsaDigest hashes msg with the alg-appropriate digest and returns
+// the hashed bytes plus the curve's coordinate size (32 for P-256,
+// 48 for P-384). The coord size is the per-component width of the
+// fixed-width r||s JOSE signature.
+func ecdsaDigest(alg Alg, msg []byte) ([]byte, int, error) {
+	switch alg {
+	case AlgES256:
+		sum := sha256.Sum256(msg)
+		return sum[:], 32, nil
+	case AlgES384:
+		sum := sha512.Sum384(msg)
+		return sum[:], 48, nil
+	default:
+		return nil, 0, fmt.Errorf("auth: ecdsaDigest: unsupported alg %s", alg)
 	}
 }
 

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/rsa"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 )
 
@@ -153,6 +155,33 @@ func verifyWith(k Key, msg, sig []byte) error {
 			return ErrInvalidSignature
 		}
 		if !ed25519.Verify(pub, msg, sig) {
+			return ErrInvalidSignature
+		}
+		return nil
+	case AlgES256, AlgES384:
+		pub, ok := k.Public.(*ecdsa.PublicKey)
+		if !ok {
+			return ErrInvalidSignature
+		}
+		digest, coordSize, err := ecdsaDigest(alg, msg)
+		if err != nil {
+			return ErrInvalidSignature
+		}
+		// JOSE r||s is fixed-width per RFC 7515 §3.4; any other length is
+		// invalid even if the underlying signature would verify.
+		if len(sig) != 2*coordSize {
+			return ErrInvalidSignature
+		}
+		// Reject signatures whose curve doesn't match the key (e.g. a
+		// P-256 sig presented for a P-384 key would otherwise fall to
+		// ecdsa.Verify which clamps silently). The coordSize check above
+		// already catches the cross-curve case, but be defensive.
+		if expected, err := algForCurve(pub.Curve); err != nil || expected != alg {
+			return ErrInvalidSignature
+		}
+		r := new(big.Int).SetBytes(sig[:coordSize])
+		s := new(big.Int).SetBytes(sig[coordSize:])
+		if !ecdsa.Verify(pub, digest, r, s) {
 			return ErrInvalidSignature
 		}
 		return nil
