@@ -21,6 +21,7 @@ import (
 	"github.com/frankbardon/parsec/internal/server"
 	"github.com/frankbardon/parsec/rpc"
 	"github.com/frankbardon/parsec/service"
+	"github.com/frankbardon/parsec/tokenbroker"
 )
 
 // Version is the version string stamped into the Service constructed by the
@@ -146,6 +147,47 @@ func NewMetricsBearerTestServer(t *testing.T, metricsBearer string) (*httptest.S
 			t.Logf("warn: parsec.Run did not exit within 2s")
 		}
 	}
+}
+
+// NewTestServerWithRevocations is NewTestServer plus a memory-backed
+// tokenbroker.RevocationStore wired through parsec.Options. The store
+// is returned so tests can inspect it directly (e.g. confirm a CLI
+// RevokeToken call landed an entry).
+func NewTestServerWithRevocations(t *testing.T) (*httptest.Server, *service.Service, *tokenbroker.MemoryRevocations, func()) {
+	t.Helper()
+	secret, err := auth.GenerateSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := tokenbroker.NewMemoryRevocations()
+	p, err := parsec.New(parsec.Options{
+		KeyRing:         RingFromSecret(t, secret),
+		SweepInterval:   50 * time.Millisecond,
+		Logger:          slog.New(slog.DiscardHandler),
+		RevocationStore: store,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	doneCh := make(chan struct{})
+	go func() {
+		_ = p.Run(ctx)
+		close(doneCh)
+	}()
+	time.Sleep(75 * time.Millisecond)
+	svc := service.New(p, Version)
+	srv := httptest.NewServer(server.New(p, svc, slog.New(slog.DiscardHandler), nil))
+	cleanup := func() {
+		srv.Close()
+		cancel()
+		select {
+		case <-doneCh:
+		case <-time.After(2 * time.Second):
+			t.Logf("warn: parsec.Run did not exit within 2s")
+		}
+	}
+	return srv, svc, store, cleanup
 }
 
 // NewBearerTestServer is like NewTestServer but installs the real

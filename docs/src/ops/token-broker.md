@@ -150,14 +150,40 @@ Audit entries are best-effort observation — they fire after the JWT
 is signed and the revocation store is updated. A panicking logger
 will not undo an issuance.
 
+## Operator-side CLI
+
+The Twirp service exposes two operator-driven revoke RPCs gated by the
+mgmt bearer. The CLI is the canonical front door:
+
+```bash
+# Single token (the access token's jti claim, which is the same value
+# the broker returns in IssueResponse.token_id).
+$ parsec tokens revoke <token-id> --user <user-id> --reason "compromised"
+
+# Blanket-revoke every token issued to a user before now.
+$ parsec tokens revoke-user <user-id> --reason "password reset"
+```
+
+`PARSEC_TOKEN` (or `--token`) supplies the mgmt bearer the same way
+every other `parsec` subcommand consumes one. The CLI is just a thin
+wrapper around the RPC; backends that need to call from code should
+hit `RevokeToken` / `RevokeUser` directly via the generated Twirp
+client.
+
+`PARSEC_INVALID_ARGUMENT` is returned when `Options.RevocationStore` is
+nil — the operator-facing path refuses to silently no-op so a missing
+wiring is discovered loudly. The user-facing `/parsec/revoke` HTTP
+route remains the right surface for end-user-driven flows (e.g. a
+"sign me out everywhere" button) because it consumes the user's own
+bearer via the broker's `Authenticator`.
+
 ## Operational runbook — revoking a compromised token
 
 1. Reach for the issuance audit log to find the `token_id`.
-2. `curl -X POST -H "Authorization: Bearer $MGMT" \
-   -d '{"token_id":"<id>","reason":"compromised"}' \
-   https://parsec.example.com/parsec/revoke`
+2. `parsec tokens revoke <id> --user <user-id> --reason "compromised"`
+   (or the raw `curl -X POST -H "Authorization: Bearer $MGMT" -d '{"token_id":"<id>","reason":"compromised"}' https://parsec.example.com/twirp/parsec.ParsecService/RevokeToken` Twirp call).
 3. Verify the revocation is visible by reissuing a fresh token for the
    same user — the new token's `token_id` will differ and the old one
    will be rejected on its next subscribe.
 4. If the compromise scope is broader than one token, blanket-revoke
-   the user with `{"user_id":"<id>","reason":"..."}`.
+   the user with `parsec tokens revoke-user <id> --reason "..."`.

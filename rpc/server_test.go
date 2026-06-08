@@ -92,6 +92,12 @@ func (f *fakeService) DlqDiscard(_ context.Context, _ *rpc.DlqDiscardRequest) (*
 func (f *fakeService) DlqReplay(_ context.Context, _ *rpc.DlqReplayRequest) (*rpc.Empty, error) {
 	return &rpc.Empty{}, nil
 }
+func (f *fakeService) RevokeToken(_ context.Context, _ *rpc.RevokeTokenRequest) (*rpc.Empty, error) {
+	return &rpc.Empty{}, nil
+}
+func (f *fakeService) RevokeUser(_ context.Context, _ *rpc.RevokeUserRequest) (*rpc.Empty, error) {
+	return &rpc.Empty{}, nil
+}
 
 // newGeneratedServer mounts the generated twirp server with the fake
 // service. Bearer enforcement is the responsibility of internal/server's

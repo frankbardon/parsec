@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/frankbardon/parsec/internal/cli"
 	"github.com/frankbardon/parsec/internal/testutil"
@@ -322,6 +323,72 @@ func TestTokensRefresh_AgainstFakeServer(t *testing.T) {
 	}
 	if !strings.Contains(out, "parsec.token.refreshed") {
 		t.Errorf("expected refreshed envelope, got %s", out)
+	}
+}
+
+func TestTokensRevoke_RequiresArg(t *testing.T) {
+	_, err := runCmd(t, cli.TokensCommand(), "tokens", "revoke")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestTokensRevokeUser_RequiresArg(t *testing.T) {
+	_, err := runCmd(t, cli.TokensCommand(), "tokens", "revoke-user")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestTokensRevoke_NoStoreReturnsError(t *testing.T) {
+	srv, _, stop := testutil.NewTestServer(t)
+	defer stop()
+	_, err := runCmd(t, cli.TokensCommand(), "tokens", "--server", srv.URL,
+		"revoke", "jti-abc", "--user", "u1", "--reason", "leak")
+	if err == nil {
+		t.Fatal("expected error from server with no RevocationStore")
+	}
+}
+
+func TestTokensRevoke_AgainstStoreWritesEntry(t *testing.T) {
+	srv, _, store, stop := testutil.NewTestServerWithRevocations(t)
+	defer stop()
+	out, err := runCmd(t, cli.TokensCommand(), "tokens", "--server", srv.URL,
+		"revoke", "jti-abc", "--user", "u1", "--reason", "leak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "parsec.token.revoked") {
+		t.Errorf("expected revoked envelope, got %s", out)
+	}
+	revoked, err := store.IsRevoked(context.Background(), "jti-abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !revoked {
+		t.Error("store did not record the revocation")
+	}
+}
+
+func TestTokensRevokeUser_AgainstStoreWritesEntry(t *testing.T) {
+	srv, _, store, stop := testutil.NewTestServerWithRevocations(t)
+	defer stop()
+	out, err := runCmd(t, cli.TokensCommand(), "tokens", "--server", srv.URL,
+		"revoke-user", "u1", "--reason", "session reset")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "parsec.token.user_revoked") {
+		t.Errorf("expected user_revoked envelope, got %s", out)
+	}
+	// Token issued before the revoke call is considered revoked.
+	preCutoff := time.Now().UTC().Add(-time.Minute)
+	revoked, err := store.IsUserRevoked(context.Background(), "u1", preCutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !revoked {
+		t.Error("store did not record the user-blanket revocation")
 	}
 }
 
