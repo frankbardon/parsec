@@ -1584,6 +1584,124 @@ func (x *DlqReplayRequest) GetId() string {
 	return ""
 }
 
+// RevokeTokenRequest marks a single token (by jti) as revoked. The
+// optional user_id and reason are recorded with the entry for audit
+// purposes; revocation matches on token_id regardless.
+type RevokeTokenRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TokenId       string                 `protobuf:"bytes,1,opt,name=token_id,json=tokenId,proto3" json:"token_id,omitempty"`
+	UserId        string                 `protobuf:"bytes,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RevokeTokenRequest) Reset() {
+	*x = RevokeTokenRequest{}
+	mi := &file_service_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevokeTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevokeTokenRequest) ProtoMessage() {}
+
+func (x *RevokeTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_service_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevokeTokenRequest.ProtoReflect.Descriptor instead.
+func (*RevokeTokenRequest) Descriptor() ([]byte, []int) {
+	return file_service_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *RevokeTokenRequest) GetTokenId() string {
+	if x != nil {
+		return x.TokenId
+	}
+	return ""
+}
+
+func (x *RevokeTokenRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *RevokeTokenRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// RevokeUserRequest invalidates every token previously issued to
+// user_id. Tokens issued AFTER the call land outside the cutoff and
+// remain valid. The optional reason is recorded for audit.
+type RevokeUserRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RevokeUserRequest) Reset() {
+	*x = RevokeUserRequest{}
+	mi := &file_service_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevokeUserRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevokeUserRequest) ProtoMessage() {}
+
+func (x *RevokeUserRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_service_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevokeUserRequest.ProtoReflect.Descriptor instead.
+func (*RevokeUserRequest) Descriptor() ([]byte, []int) {
+	return file_service_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *RevokeUserRequest) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
+func (x *RevokeUserRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 var File_service_proto protoreflect.FileDescriptor
 
 const file_service_proto_rawDesc = "" +
@@ -1695,7 +1813,14 @@ const file_service_proto_rawDesc = "" +
 	"\x11DlqDiscardRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\"\n" +
 	"\x10DlqReplayRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id2\xd7\b\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"`\n" +
+	"\x12RevokeTokenRequest\x12\x19\n" +
+	"\btoken_id\x18\x01 \x01(\tR\atokenId\x12\x17\n" +
+	"\auser_id\x18\x02 \x01(\tR\x06userId\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"D\n" +
+	"\x11RevokeUserRequest\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\tR\x06userId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason2\xc9\t\n" +
 	"\rParsecService\x12/\n" +
 	"\bManifest\x12\r.parsec.Empty\x1a\x14.parsec.JSONResponse\x12@\n" +
 	"\n" +
@@ -1720,7 +1845,10 @@ const file_service_proto_rawDesc = "" +
 	"\bDlqCount\x12\x17.parsec.DlqCountRequest\x1a\x18.parsec.DlqCountResponse\x126\n" +
 	"\n" +
 	"DlqDiscard\x12\x19.parsec.DlqDiscardRequest\x1a\r.parsec.Empty\x124\n" +
-	"\tDlqReplay\x12\x18.parsec.DlqReplayRequest\x1a\r.parsec.EmptyB'Z%github.com/frankbardon/parsec/rpc;rpcb\x06proto3"
+	"\tDlqReplay\x12\x18.parsec.DlqReplayRequest\x1a\r.parsec.Empty\x128\n" +
+	"\vRevokeToken\x12\x1a.parsec.RevokeTokenRequest\x1a\r.parsec.Empty\x126\n" +
+	"\n" +
+	"RevokeUser\x12\x19.parsec.RevokeUserRequest\x1a\r.parsec.EmptyB'Z%github.com/frankbardon/parsec/rpc;rpcb\x06proto3"
 
 var (
 	file_service_proto_rawDescOnce sync.Once
@@ -1734,7 +1862,7 @@ func file_service_proto_rawDescGZIP() []byte {
 	return file_service_proto_rawDescData
 }
 
-var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_service_proto_goTypes = []any{
 	(*Empty)(nil),                // 0: parsec.Empty
 	(*JSONResponse)(nil),         // 1: parsec.JSONResponse
@@ -1764,14 +1892,16 @@ var file_service_proto_goTypes = []any{
 	(*DlqCountResponse)(nil),     // 25: parsec.DlqCountResponse
 	(*DlqDiscardRequest)(nil),    // 26: parsec.DlqDiscardRequest
 	(*DlqReplayRequest)(nil),     // 27: parsec.DlqReplayRequest
-	nil,                          // 28: parsec.DlqItem.MetadataEntry
+	(*RevokeTokenRequest)(nil),   // 28: parsec.RevokeTokenRequest
+	(*RevokeUserRequest)(nil),    // 29: parsec.RevokeUserRequest
+	nil,                          // 30: parsec.DlqItem.MetadataEntry
 }
 var file_service_proto_depIdxs = []int32{
 	4,  // 0: parsec.CreatePrivateRequest.scopes:type_name -> parsec.Scope
 	6,  // 1: parsec.ChannelResponse.channel:type_name -> parsec.ChannelSummary
 	6,  // 2: parsec.ListChannelsResponse.channels:type_name -> parsec.ChannelSummary
 	17, // 3: parsec.ListKeysResponse.keys:type_name -> parsec.KeySummary
-	28, // 4: parsec.DlqItem.metadata:type_name -> parsec.DlqItem.MetadataEntry
+	30, // 4: parsec.DlqItem.metadata:type_name -> parsec.DlqItem.MetadataEntry
 	21, // 5: parsec.DlqListResponse.items:type_name -> parsec.DlqItem
 	0,  // 6: parsec.ParsecService.Manifest:input_type -> parsec.Empty
 	2,  // 7: parsec.ParsecService.OpenPublic:input_type -> parsec.OpenPublicRequest
@@ -1792,27 +1922,31 @@ var file_service_proto_depIdxs = []int32{
 	24, // 22: parsec.ParsecService.DlqCount:input_type -> parsec.DlqCountRequest
 	26, // 23: parsec.ParsecService.DlqDiscard:input_type -> parsec.DlqDiscardRequest
 	27, // 24: parsec.ParsecService.DlqReplay:input_type -> parsec.DlqReplayRequest
-	1,  // 25: parsec.ParsecService.Manifest:output_type -> parsec.JSONResponse
-	7,  // 26: parsec.ParsecService.OpenPublic:output_type -> parsec.ChannelResponse
-	9,  // 27: parsec.ParsecService.CreatePrivate:output_type -> parsec.Credentials
-	8,  // 28: parsec.ParsecService.ListChannels:output_type -> parsec.ListChannelsResponse
-	7,  // 29: parsec.ParsecService.GetChannel:output_type -> parsec.ChannelResponse
-	0,  // 30: parsec.ParsecService.DeleteChannel:output_type -> parsec.Empty
-	11, // 31: parsec.ParsecService.Publish:output_type -> parsec.PublishResponse
-	12, // 32: parsec.ParsecService.Presence:output_type -> parsec.PresenceResponse
-	14, // 33: parsec.ParsecService.RefreshToken:output_type -> parsec.RefreshTokenResponse
-	16, // 34: parsec.ParsecService.IssueMgmt:output_type -> parsec.IssueMgmtResponse
-	19, // 35: parsec.ParsecService.ListKeys:output_type -> parsec.ListKeysResponse
-	17, // 36: parsec.ParsecService.GenerateKey:output_type -> parsec.KeySummary
-	0,  // 37: parsec.ParsecService.PromoteKey:output_type -> parsec.Empty
-	0,  // 38: parsec.ParsecService.RetireKey:output_type -> parsec.Empty
-	0,  // 39: parsec.ParsecService.ReloadKeys:output_type -> parsec.Empty
-	23, // 40: parsec.ParsecService.DlqList:output_type -> parsec.DlqListResponse
-	25, // 41: parsec.ParsecService.DlqCount:output_type -> parsec.DlqCountResponse
-	0,  // 42: parsec.ParsecService.DlqDiscard:output_type -> parsec.Empty
-	0,  // 43: parsec.ParsecService.DlqReplay:output_type -> parsec.Empty
-	25, // [25:44] is the sub-list for method output_type
-	6,  // [6:25] is the sub-list for method input_type
+	28, // 25: parsec.ParsecService.RevokeToken:input_type -> parsec.RevokeTokenRequest
+	29, // 26: parsec.ParsecService.RevokeUser:input_type -> parsec.RevokeUserRequest
+	1,  // 27: parsec.ParsecService.Manifest:output_type -> parsec.JSONResponse
+	7,  // 28: parsec.ParsecService.OpenPublic:output_type -> parsec.ChannelResponse
+	9,  // 29: parsec.ParsecService.CreatePrivate:output_type -> parsec.Credentials
+	8,  // 30: parsec.ParsecService.ListChannels:output_type -> parsec.ListChannelsResponse
+	7,  // 31: parsec.ParsecService.GetChannel:output_type -> parsec.ChannelResponse
+	0,  // 32: parsec.ParsecService.DeleteChannel:output_type -> parsec.Empty
+	11, // 33: parsec.ParsecService.Publish:output_type -> parsec.PublishResponse
+	12, // 34: parsec.ParsecService.Presence:output_type -> parsec.PresenceResponse
+	14, // 35: parsec.ParsecService.RefreshToken:output_type -> parsec.RefreshTokenResponse
+	16, // 36: parsec.ParsecService.IssueMgmt:output_type -> parsec.IssueMgmtResponse
+	19, // 37: parsec.ParsecService.ListKeys:output_type -> parsec.ListKeysResponse
+	17, // 38: parsec.ParsecService.GenerateKey:output_type -> parsec.KeySummary
+	0,  // 39: parsec.ParsecService.PromoteKey:output_type -> parsec.Empty
+	0,  // 40: parsec.ParsecService.RetireKey:output_type -> parsec.Empty
+	0,  // 41: parsec.ParsecService.ReloadKeys:output_type -> parsec.Empty
+	23, // 42: parsec.ParsecService.DlqList:output_type -> parsec.DlqListResponse
+	25, // 43: parsec.ParsecService.DlqCount:output_type -> parsec.DlqCountResponse
+	0,  // 44: parsec.ParsecService.DlqDiscard:output_type -> parsec.Empty
+	0,  // 45: parsec.ParsecService.DlqReplay:output_type -> parsec.Empty
+	0,  // 46: parsec.ParsecService.RevokeToken:output_type -> parsec.Empty
+	0,  // 47: parsec.ParsecService.RevokeUser:output_type -> parsec.Empty
+	27, // [27:48] is the sub-list for method output_type
+	6,  // [6:27] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -1829,7 +1963,7 @@ func file_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   29,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

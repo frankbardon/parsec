@@ -42,6 +42,14 @@ service ParsecService {
   rpc DlqCount(DlqCountRequest) returns (DlqCountResponse);
   rpc DlqDiscard(DlqDiscardRequest) returns (Empty);
   rpc DlqReplay(DlqReplayRequest) returns (Empty);
+
+  // Token revocation. Operator-driven: gated by the mgmt bearer (NOT by
+  // the user-facing /parsec/revoke handler which authenticates with the
+  // user's own token). The store must be wired via
+  // parsec.Options.RevocationStore; calls fail with PARSEC_INVALID_ARGUMENT
+  // when no store is configured.
+  rpc RevokeToken(RevokeTokenRequest) returns (Empty);
+  rpc RevokeUser(RevokeUserRequest) returns (Empty);
 }
 
 message Empty {}
@@ -232,4 +240,21 @@ message DlqDiscardRequest {
 
 message DlqReplayRequest {
   string id = 1;
+}
+
+// RevokeTokenRequest marks a single token (by jti) as revoked. The
+// optional user_id and reason are recorded with the entry for audit
+// purposes; revocation matches on token_id regardless.
+message RevokeTokenRequest {
+  string token_id = 1;
+  string user_id = 2;
+  string reason = 3;
+}
+
+// RevokeUserRequest invalidates every token previously issued to
+// user_id. Tokens issued AFTER the call land outside the cutoff and
+// remain valid. The optional reason is recorded for audit.
+message RevokeUserRequest {
+  string user_id = 1;
+  string reason = 2;
 }

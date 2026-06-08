@@ -22,6 +22,8 @@ func TokensCommand() *ucli.Command {
 		Commands: []*ucli.Command{
 			tokensRefreshCommand(),
 			tokensMgmtCommand(),
+			tokensRevokeCommand(),
+			tokensRevokeUserCommand(),
 		},
 	}
 }
@@ -63,4 +65,70 @@ func tokensMgmtCommand() *ucli.Command {
 			return descriptor.WriteEnvelope(cmd.Writer, descriptor.NewEnvelope("parsec.token.mgmt", res))
 		},
 	}
+}
+
+// tokensRevokeCommand marks a single token-id revoked. The token-id is
+// the `jti` claim that ships in every access token minted by the
+// library (and the token-broker /parsec/token response's `token_id`
+// field). The mgmt bearer (--token / PARSEC_TOKEN) gates the call.
+func tokensRevokeCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:      "revoke",
+		Usage:     "Revoke a single access token by jti",
+		ArgsUsage: "<token-id>",
+		Flags: []ucli.Flag{
+			&ucli.StringFlag{Name: "user", Aliases: []string{"u"}, Usage: "Optional user-id to record with the revocation (audit only)"},
+			&ucli.StringFlag{Name: "reason", Aliases: []string{"r"}, Usage: "Optional revocation reason (audit only)"},
+		},
+		Action: func(ctx context.Context, cmd *ucli.Command) error {
+			if cmd.NArg() < 1 {
+				return fmt.Errorf("token id required")
+			}
+			tokenID := cmd.Args().First()
+			c := rpcclient.New(cmd.String("server"), cmd.String("token"))
+			if err := c.RevokeToken(ctx, tokenID, cmd.String("user"), cmd.String("reason")); err != nil {
+				return err
+			}
+			return descriptor.WriteEnvelope(cmd.Writer, descriptor.NewEnvelope("parsec.token.revoked", RevokeSummary{
+				TokenID: tokenID,
+				UserID:  cmd.String("user"),
+				Reason:  cmd.String("reason"),
+			}))
+		},
+	}
+}
+
+// tokensRevokeUserCommand invalidates every token previously issued to
+// a user-id. Tokens minted after the call remain valid (the store uses
+// a cutoff-timestamp comparison vs the token's iat claim).
+func tokensRevokeUserCommand() *ucli.Command {
+	return &ucli.Command{
+		Name:      "revoke-user",
+		Usage:     "Revoke every token previously issued to a user",
+		ArgsUsage: "<user-id>",
+		Flags: []ucli.Flag{
+			&ucli.StringFlag{Name: "reason", Aliases: []string{"r"}, Usage: "Optional revocation reason (audit only)"},
+		},
+		Action: func(ctx context.Context, cmd *ucli.Command) error {
+			if cmd.NArg() < 1 {
+				return fmt.Errorf("user id required")
+			}
+			userID := cmd.Args().First()
+			c := rpcclient.New(cmd.String("server"), cmd.String("token"))
+			if err := c.RevokeUser(ctx, userID, cmd.String("reason")); err != nil {
+				return err
+			}
+			return descriptor.WriteEnvelope(cmd.Writer, descriptor.NewEnvelope("parsec.token.user_revoked", RevokeSummary{
+				UserID: userID,
+				Reason: cmd.String("reason"),
+			}))
+		},
+	}
+}
+
+// RevokeSummary is the descriptor payload for a successful revoke.
+type RevokeSummary struct {
+	TokenID string `json:"token_id,omitempty"`
+	UserID  string `json:"user_id,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 }
