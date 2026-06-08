@@ -153,6 +153,17 @@ type Manifest struct {
 	// CANNOT actually deny mid-flight tokens; this flag surfaces that
 	// fact to operators.
 	RevocationStoreEnabled bool `json:"revocation_store_enabled"`
+
+	// CacheEnabled reports whether the request-hash cache is wired.
+	// When false, Parsec.Cache() returns nil and embedders fall back
+	// to recomputing.
+	CacheEnabled bool `json:"cache_enabled"`
+
+	// CacheBackend names the cache implementation ("" when off,
+	// "memory" / "redis" / "noop" for the bundled impls, "custom" for
+	// an embedder-supplied Cache). SDKs read this to surface the
+	// backend in operator dashboards.
+	CacheBackend string `json:"cache_backend,omitempty"`
 }
 
 // SinkRetrySummary is the manifest snapshot of the sink retry config.

@@ -345,3 +345,62 @@ func (c *RedisCache) Stats() Stats {
 		Puts:   c.puts.Load(),
 	}
 }
+
+// ---------- NoopCache ----------
+
+// NoopCache is the "cache disabled" sentinel. Get always misses; Put,
+// Delete, and their tenant-scoped twins are no-ops. Useful as an
+// explicit opt-out when parsec.Options.RedisClient is set but the
+// embedder does NOT want the auto-built Redis cache.
+type NoopCache struct{}
+
+// NewNoopCache returns the singleton NoopCache value.
+func NewNoopCache() NoopCache { return NoopCache{} }
+
+func (NoopCache) Get(context.Context, string) (envelope.Envelope, bool, error) {
+	return envelope.Envelope{}, false, nil
+}
+
+func (NoopCache) Put(context.Context, string, envelope.Envelope, time.Duration) error { return nil }
+func (NoopCache) Delete(context.Context, string) error                                { return nil }
+
+func (NoopCache) GetForTenant(context.Context, string, string) (envelope.Envelope, bool, error) {
+	return envelope.Envelope{}, false, nil
+}
+
+func (NoopCache) PutForTenant(context.Context, string, string, envelope.Envelope, time.Duration) error {
+	return nil
+}
+func (NoopCache) DeleteForTenant(context.Context, string, string) error { return nil }
+func (NoopCache) Stats() Stats                                          { return Stats{} }
+
+// BackendReporter is an optional escape hatch for caches wrapped in a
+// transparent observer (metrics, tracing). The wrapper implements this
+// to expose the underlying backend without exposing the inner Cache
+// itself.
+type BackendReporter interface {
+	Backend() string
+}
+
+// Backend reports the implementation name. The manifest surfaces this
+// so SDKs and dashboards can distinguish memory / redis / noop without
+// reflecting on the cache value. A BackendReporter implementation
+// (typically a metrics wrapper) is asked first so wrappers are
+// transparent.
+func Backend(c Cache) string {
+	if c == nil {
+		return ""
+	}
+	if br, ok := c.(BackendReporter); ok {
+		return br.Backend()
+	}
+	switch c.(type) {
+	case *MemoryCache:
+		return "memory"
+	case *RedisCache:
+		return "redis"
+	case NoopCache:
+		return "noop"
+	}
+	return "custom"
+}

@@ -96,6 +96,24 @@ non-blocking sends, so use a buffered channel. `parsec.New` composes the
 subscribe authorizer so closed/deleted channels reject new subscribes
 even before the bridge runs.
 
+### Request-hash cache (`cache/`)
+Embedders share computation results across users via `parsec.Options.Cache`
+(or auto-build from `RedisClient`). Two impls ship: `MemoryCache` (LRU
++ TTL + background sweeper) and `RedisCache` (cross-host, JSON-encoded
+envelopes under a configurable prefix). `NoopCache` is the explicit
+opt-out when `RedisClient` is set but the embedder doesn't want the
+auto-built Redis cache.
+
+Access via `p.Cache()`; backend label via `p.CacheBackend()` ("memory"
+/ "redis" / "noop" / "custom" / ""). The manifest exposes
+`cache_enabled` and `cache_backend`. Every operation flows through a
+metrics wrapper (`internal/metrics/cachewrap.go`) emitting
+`parsec_cache_operations_total{op,result}` and
+`parsec_cache_size_entries{backend}`. The telemetry aggregator picks
+the cache up via `telemetry.NewCacheSourceFromCache(p.Cache())` —
+nil-safe so a cache-less deployment composes the same way. See
+[docs/src/ops/cache.md](../docs/src/ops/cache.md).
+
 ### Token broker (`tokenbroker/`)
 The token broker is the policy point for user-facing connection tokens.
 The library mints tokens via `auth.Issuer`; the broker sits in front and
@@ -406,6 +424,7 @@ Any change to a public surface MUST update its docs in the same PR.
 | New telemetry Snapshot field | `telemetry/telemetry.go` Source method + Aggregator sum branch + corresponding `parsec_telemetry_*` gauge in `telemetry/prom.go` + metric-reference row in `docs/src/ops/telemetry-alerts.md` |
 | New severity level | `telemetry/alerts.go` Severity const + `Valid()` branch + table row in `docs/src/ops/telemetry-alerts.md` |
 | New `tokenbroker.RevocationStore` impl | implement all four interface methods + apply `MaxTTL` semantics + tests for token-scope + user-scope round trips + entry in `docs/src/ops/token-broker.md` |
+| New `cache.Cache` backend | implement all 7 interface methods + return a stable `cache.Stats` shape + optional `cache.BackendReporter` for manifest label + entry in the backend table in `docs/src/ops/cache.md` |
 
 ## Anti-patterns to refuse
 
