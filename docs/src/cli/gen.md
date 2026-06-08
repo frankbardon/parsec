@@ -77,8 +77,21 @@ client.OnAspectTyped[parsecgen.SessionsData](sub, "data",
     })
 ```
 
-The TypeScript output is consumed the same way by the upcoming JS
-client (parsec-upgrades §3).
+The TypeScript output drops straight into `parsec-client`'s
+`typedSubscribe<T>` ergonomic:
+
+```ts
+import { sessionsChannel, type SessionsData } from "./gen/index";
+
+const sub = client.typedSubscribe<SessionsData>(sessionsChannel(userId));
+sub.on("publication", ({ data }) => {
+  // data: SessionsData
+});
+await sub.subscribe();
+```
+
+See [JavaScript Client (parsec-client)](../getting-started/js-client.md)
+for the full integration.
 
 ## Regeneration
 

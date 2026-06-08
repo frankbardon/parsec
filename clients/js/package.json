@@ -1,0 +1,79 @@
+{
+  "name": "@frankbardon/parsec-client",
+  "version": "0.1.0",
+  "description": "Browser/Node client for the Parsec realtime messaging engine. Composition-only wrapper around centrifuge-js with token refresh, channel-name validation, manifest-driven transport selection, coded errors, and unverified scope inspection.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./channels": {
+      "types": "./dist/channels.d.ts",
+      "import": "./dist/channels.js",
+      "require": "./dist/channels.cjs"
+    },
+    "./scopes": {
+      "types": "./dist/scopes.d.ts",
+      "import": "./dist/scopes.js",
+      "require": "./dist/scopes.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "PARSEC_INTEGRATION=1 vitest run test/integration"
+  },
+  "keywords": [
+    "parsec",
+    "centrifuge",
+    "centrifugo",
+    "realtime",
+    "websocket",
+    "pubsub",
+    "messaging"
+  ],
+  "author": "Frank Bardon Jr.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frankbardon/parsec.git",
+    "directory": "clients/js"
+  },
+  "homepage": "https://github.com/frankbardon/parsec/tree/main/clients/js",
+  "bugs": {
+    "url": "https://github.com/frankbardon/parsec/issues"
+  },
+  "dependencies": {
+    "centrifuge": "^5.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^9.18.0",
+    "jsdom": "^26.0.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}
