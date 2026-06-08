@@ -1,9 +1,11 @@
 {
   "permissions": {
+    "defaultMode": "plan",
     "allow": [
       "Bash(env)",
       "Bash(go build:*)",
       "Bash(go doc *)",
+      "Bash(go env *)",
       "Bash(go get:*)",
       "Bash(go mod:*)",
       "Bash(go test:*)",
@@ -30,6 +32,7 @@
       "WebFetch(domain:centrifugal.dev)"
     ]
   },
+  "preferredNotifChannel": "terminal_bell",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -39,6 +42,18 @@
             "type": "command",
             "command": ".claude/hooks/fetch-issue-context.sh",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/enforce-checks.sh",
+            "timeout": 600
           }
         ]
       }
