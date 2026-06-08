@@ -382,10 +382,12 @@ contract:
 4. Bucket keys are stable: `publish:<mgmt-subject>`,
    `subscribe:<userID>`, `token-issue:<remote-ip>`. Per-channel publish
    rules (`Options.PerChannelPublishLimits`) namespace the key as
-   `publish-channel:<rule-pattern>:<subject>` so isolated channels do
-   not share the global publish budget. The HTTP middleware in
-   `internal/server/http.go` stamps the subject + IP into the request
-   context via `parsec.WithSubject` / `parsec.WithRemoteIP`.
+   `publish-channel:<rule-pattern>:<subject>`; per-channel subscribe
+   rules (`Options.PerChannelSubscribeLimits`) namespace the key as
+   `subscribe-channel:<rule-pattern>:<userID>`. Isolated channels do
+   not share the global publish/subscribe budget. The HTTP middleware
+   in `internal/server/http.go` stamps the subject + IP into the
+   request context via `parsec.WithSubject` / `parsec.WithRemoteIP`.
 5. A budget hit returns `PARSEC_RATE_LIMITED` → Twirp
    `resource_exhausted` → HTTP 429.
 6. Per-token override: `auth.Claims.RateLimitOverride` (json `rl`) may

@@ -17,7 +17,7 @@ import (
 //
 // The returned function matches broker.SubscribeAuthorizer.
 func NewSubscribeAuthorizer(v *Verifier) func(ctx context.Context, userID string, ch channels.Name, event centrifuge.SubscribeEvent) error {
-	return NewSubscribeAuthorizerWithLimiter(v, nil, ratelimit.Limit{})
+	return NewSubscribeAuthorizerWithGate(v, nil)
 }
 
 // NewSubscribeAuthorizerWithLimiter is NewSubscribeAuthorizer plus a
@@ -31,24 +31,43 @@ func NewSubscribeAuthorizer(v *Verifier) func(ctx context.Context, userID string
 // Passing limiter == nil or a zero Limit reverts to the no-rate-limit
 // behaviour.
 func NewSubscribeAuthorizerWithLimiter(v *Verifier, limiter ratelimit.Limiter, defaultLimit ratelimit.Limit) func(ctx context.Context, userID string, ch channels.Name, event centrifuge.SubscribeEvent) error {
+	if limiter == nil || defaultLimit.Unlimited() {
+		return NewSubscribeAuthorizerWithGate(v, nil)
+	}
+	gate := func(ctx context.Context, userID string, _ channels.Name) error {
+		if userID == "" {
+			return nil
+		}
+		key := ratelimit.BucketSubscribe + ":" + userID
+		dec, err := limiter.Allow(ctx, key, 1)
+		if err != nil {
+			return errors.Wrap(errors.Internal, "rate limiter error", err)
+		}
+		if !dec.Allowed {
+			return errors.New(errors.RateLimited, "subscribe rate limit exceeded")
+		}
+		return nil
+	}
+	return NewSubscribeAuthorizerWithGate(v, gate)
+}
+
+// SubscribeRateGate is the per-subscribe rate-limit callback. It runs
+// BEFORE token verification with the authenticated userID + parsed
+// channel; an empty userID means the connection is anonymous and
+// operator-side L7 rate limiting is responsible for protection.
+// Returning a coded *errors.Error denies the subscribe with that
+// code; returning nil allows the authorizer to proceed.
+type SubscribeRateGate func(ctx context.Context, userID string, ch channels.Name) error
+
+// NewSubscribeAuthorizerWithGate is the generalized form: the rate-limit
+// gate is supplied as a callback so the caller can resolve per-channel
+// rules (or any other policy) instead of being constrained to a single
+// flat per-subject Limit. Pass gate == nil to disable the gate.
+func NewSubscribeAuthorizerWithGate(v *Verifier, gate SubscribeRateGate) func(ctx context.Context, userID string, ch channels.Name, event centrifuge.SubscribeEvent) error {
 	return func(ctx context.Context, userID string, ch channels.Name, event centrifuge.SubscribeEvent) error {
-		if limiter != nil && !defaultLimit.Unlimited() {
-			// userID is the centrifuge connection's authenticated subject.
-			// When empty (anonymous transport) we have no stable per-client
-			// identity available here — the SubscribeEvent does not
-			// surface a remote address. In that case we allow without
-			// charging the bucket; operators who want per-IP gating on
-			// anonymous traffic should run behind a proxy that enforces
-			// rate limits at L7.
-			if userID != "" {
-				key := ratelimit.BucketSubscribe + ":" + userID
-				dec, err := limiter.Allow(ctx, key, 1)
-				if err != nil {
-					return errors.Wrap(errors.Internal, "rate limiter error", err)
-				}
-				if !dec.Allowed {
-					return errors.New(errors.RateLimited, "subscribe rate limit exceeded")
-				}
+		if gate != nil {
+			if err := gate(ctx, userID, ch); err != nil {
+				return err
 			}
 		}
 		if !ch.IsPrivate() {
