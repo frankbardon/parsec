@@ -1,5 +1,14 @@
 # Browser client
 
+> **Looking for a batteries-included wrapper?** The [JavaScript Client
+> (parsec-client)](./js-client.md) page documents an opinionated
+> `@frankbardon/parsec-client` package that adds token refresh,
+> channel-name validation, manifest-driven transport selection, and
+> coded error mapping on top of `centrifuge-js`. The page you are
+> reading remains the bare-metal `centrifuge-js` walkthrough — useful
+> when you want full control or are stitching parsec into an existing
+> client.
+
 This page walks through the full browser ↔ parsec round-trip:
 
 1. A Go server hosts parsec and an HTML page.
@@ -9,8 +18,8 @@ This page walks through the full browser ↔ parsec round-trip:
    access token at connect time.
 
 Parsec speaks the Centrifugo wire protocol unchanged, so the official
-JS client is a drop-in. No custom SDK ships in this repo — every
-example below uses `centrifuge-js` directly.
+JS client is a drop-in. Every example below uses `centrifuge-js`
+directly.
 
 ## 1. Public channel — no auth
 

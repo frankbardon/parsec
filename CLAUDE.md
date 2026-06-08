@@ -293,6 +293,33 @@ manifest's `transports` list as `http_stream`. See
 Tiny polling-backed Server-Sent Events stream at `/sse?channel=<name>`.
 Used only by the CLI `subscribe` probe — not a production transport.
 
+### JavaScript client (`clients/js/`)
+`clients/js/` holds the `@frankbardon/parsec-client` npm package — a
+composition-only wrapper around `centrifuge-js` v5.x. The wrapper adds
+the Parsec conventions a browser client needs: token refresh + rotation
+via the Twirp `RefreshToken` RPC, channel-name validation (port of
+`channels/name.go`), manifest-driven transport selection, coded
+errors that mirror `errors/codes.go`, and an unverified-only scope
+inspector for UIs.
+
+Rules:
+- Composition over `centrifuge-js`, never subclassing. Anything
+  centrifuge-js already does is not re-implemented.
+- Anything Parsec-specific lives here. Anything the Go server cannot
+  also model belongs nowhere — the wrapper transports policy, never
+  invents it.
+- The channel grammar parser in `clients/js/src/channels.ts` is a
+  port of `channels/name.go` and MUST stay in sync — see the Update
+  Demand row.
+- Coded errors in `clients/js/src/errors.ts` mirror `errors/codes.go`
+  one-for-one. Twirp JSON → coded error mapping mirrors
+  `internal/rpcclient/errors.go`.
+- The descriptor envelope parser in `clients/js/src/manifest.ts`
+  reads `format_version`. A bump in `descriptor.FormatVersion` is a
+  wire break and must update the JS client in the same PR.
+- The package versions independently from the Go server. Each npm
+  release declares a minimum server version in its CHANGELOG.
+
 ### Observability
 Every Parsec deployment is observable. Three streams:
 
@@ -428,7 +455,7 @@ Any change to a public surface MUST update its docs in the same PR.
 | New CLI subcommand | `docs/src/cli/` page + `docs/src/SUMMARY.md` |
 | New RPC method | `rpc/service.proto` + run `make proto` (commit generated `service.pb.go` + `service.twirp.go`) + adapter method in `service/adapter.go` (or `service/keys_adapter.go`) + `internal/rpcclient/` + `internal/cli/` |
 | New channel namespace | `docs/src/channels/naming.md` + a test in `channels/name_test.go` |
-| New error code | `errors/codes.go` + server-side mapping in `service/twirp_errors.go` + client-side mapping in `internal/rpcclient/errors.go` |
+| New error code | `errors/codes.go` + server-side mapping in `service/twirp_errors.go` + client-side mapping in `internal/rpcclient/errors.go` + `clients/js/src/errors.ts` `ParsecErrorCode` enum + Twirp mapper + a row in `clients/js/test/errors.test.ts` |
 | New sink | `sinks/<name>/` package + manifest exposure via registry + MUST declare transient/terminal classification by wrapping errors with `sinks.Transient(err)` / `sinks.Terminal(err)`; sinks with a per-call recipient MUST implement `sinks.RecipientDecoder` so Redis-DLQ Replay can rebuild the typed Recipient |
 | New auth token type | `auth/claims.go` (Type const + Valid()) + verifier round-trip test + manifest exposure if applicable |
 | New key role | `auth/keyring.go` Role const + tests + `keyring.json` format_version bump if persisted differently |
@@ -440,6 +467,10 @@ Any change to a public surface MUST update its docs in the same PR.
 | New severity level | `telemetry/alerts.go` Severity const + `Valid()` branch + table row in `docs/src/ops/telemetry-alerts.md` |
 | New `tokenbroker.RevocationStore` impl | implement all four interface methods + apply `MaxTTL` semantics + tests for token-scope + user-scope round trips + entry in `docs/src/ops/token-broker.md` |
 | New `cache.Cache` backend | implement all 7 interface methods + return a stable `cache.Stats` shape + optional `cache.BackendReporter` for manifest label + entry in the backend table in `docs/src/ops/cache.md` |
+| Change to `channels/name.go` grammar | port to `clients/js/src/channels.ts` in the same PR + mirror the new test case in `clients/js/test/channels.test.ts` |
+| Bump `descriptor.FormatVersion` | update `clients/js/src/manifest.ts` envelope parser + `clients/js/src/types.ts` Envelope/Manifest shape + a fixture refresh in `clients/js/test/manifest.test.ts` |
+| New transport mounted in `internal/server/` | add to the `TransportName` union in `clients/js/src/types.ts` + extend `clients/js/src/manifest.ts` `transportPath` + doc page row in `docs/src/getting-started/js-client.md` |
+| Refresh-token RPC wire change | update `RefreshTokenRequest`/`RefreshTokenResponse` in `clients/js/src/types.ts` + `clients/js/src/refresh.ts` mapping + a refresh fixture in `clients/js/test/refresh.test.ts` |
 
 ## Anti-patterns to refuse
 
@@ -451,3 +482,13 @@ Any change to a public surface MUST update its docs in the same PR.
 - Adding a feature to Parsec that the centrifuge OSS lib cannot deliver. The
   reflex should be: "is this a primitive parsec should ship, or a sink the
   consumer should compose?"
+- A JS-client feature the Go server cannot also model. The wrapper transports
+  policy, never invents it. If `clients/js/` grows authorization or schema
+  decisions, the decision belongs in `service/` and the client just plumbs
+  the verdict.
+- A second JavaScript package in this repo. One client, one wrapper. New
+  language clients live in `clients/<lang>/` — not under a separate
+  `clients/js-extras/` or `clients/js2/`.
+- A `clients/js/src/` module that imports `centrifuge` types into the
+  `types.ts` public surface. Scope-inspector-only consumers must be able
+  to import `types.ts` without dragging centrifuge-js into the type graph.

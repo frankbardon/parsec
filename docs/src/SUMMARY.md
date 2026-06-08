@@ -8,6 +8,7 @@
 - [Quick Start](getting-started/quickstart.md)
 - [Running with Docker](getting-started/docker.md)
 - [Browser Client](getting-started/browser-client.md)
+- [JavaScript Client (parsec-client)](getting-started/js-client.md)
 
 # Channels
 
@@ -59,7 +60,7 @@
 - [Configuration File](ops/config.md)
 - [Key Rotation Runbook](ops/key-rotation.md)
 - [Refresh-Token Rotation](ops/refresh-rotation.md)
-- [Asymmetric Signing (RS256 / EdDSA)](ops/asymmetric-signing.md)
+- [Asymmetric Signing (RS256 / EdDSA / ES256 / ES384)](ops/asymmetric-signing.md)
 - [OIDC Bridge](ops/oidc.md)
 - [Token Broker](ops/token-broker.md)
 - [Request-Hash Cache](ops/cache.md)
