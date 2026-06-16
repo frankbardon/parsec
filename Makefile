@@ -1,4 +1,4 @@
-.PHONY: build clean test test-integration cover fmt vet lint proto docs docs-serve docs-clean
+.PHONY: build clean test test-integration cover fmt vet lint proto docs docs-serve docs-clean playground
 
 BINARY_NAME=parsec
 BUILD_DIR=bin
@@ -64,5 +64,11 @@ docs-serve:
 
 docs-clean:
 	rm -rf docs/book
+
+# Boot an in-memory parsec + tabbed browser UI for poking at every
+# surface (publish, subscribe, tokens, sinks, DLQ, rate limit,
+# manifest). Developer aid only — bearer auth is disabled.
+playground:
+	$(GO) run ./examples/playground
 
 .DEFAULT_GOAL := build

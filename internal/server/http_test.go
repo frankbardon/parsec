@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -260,6 +261,46 @@ func TestHTTP_WebsocketEndpointAccepts101(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		t.Fatalf("route not mounted: %d", resp.StatusCode)
+	}
+}
+
+// TestHTTP_WebsocketUpgradeSucceeds drives a real WebSocket handshake
+// through the full middleware chain (metrics + access-log) so the
+// statusRecorder / accessRecorder must forward http.Hijacker. A
+// regression of either wrapper losing the hijack interface manifests as
+// a 500 here instead of a 101, breaking every centrifuge-js client.
+func TestHTTP_WebsocketUpgradeSucceeds(t *testing.T) {
+	srv, _, stop := testutil.NewTestServer(t)
+	defer stop()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	req := "GET /connection/websocket HTTP/1.1\r\n" +
+		"Host: " + u.Host + "\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+		"Sec-WebSocket-Version: 13\r\n" +
+		"Origin: http://" + u.Host + "\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 128)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	statusLine := string(buf[:n])
+	if !strings.HasPrefix(statusLine, "HTTP/1.1 101 ") {
+		t.Fatalf("websocket upgrade did not return 101 (status: %q)", strings.SplitN(statusLine, "\r\n", 2)[0])
 	}
 }
 
