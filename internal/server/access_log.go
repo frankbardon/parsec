@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -125,6 +126,16 @@ func (a *accessRecorder) Flush() {
 	if f, ok := a.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack forwards to the underlying writer so the centrifuge WebSocket
+// handler can upgrade the connection. Without this the middleware
+// silently breaks every /connection/websocket request with a 500.
+func (a *accessRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := a.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
 }
 
 // generateRequestID returns a short, URL-safe random ID. 12 bytes of
