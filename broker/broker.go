@@ -55,6 +55,13 @@ type Options struct {
 	// signed delta (+1 / -1). Used by the metrics layer to keep a live
 	// subscriber gauge by visibility without leaking channel names.
 	OnSubscriberChange func(ch channels.Name, delta int)
+	// OnClientRPC, when non-nil, is registered as each connected client's RPC
+	// handler. It lets an embedder receive request/response calls from clients
+	// (e.g. server-authoritative intents) without taking over the broker's own
+	// per-client wiring. userID is the connection's subject; the returned bytes
+	// are sent back as the RPC reply, and a returned error is mapped to the
+	// client as an RPC error.
+	OnClientRPC func(ctx context.Context, userID string, event centrifuge.RPCEvent) ([]byte, error)
 }
 
 // SubscribeAuthorizer decides whether a connection may subscribe to ch.
@@ -140,7 +147,18 @@ func New(opts Options) (*Broker, error) {
 	auth := opts.SubscribeAuthorizer
 	onChange := opts.OnSubscriberChange
 	deltaProvider := opts.DeltaProvider
+	onRPC := opts.OnClientRPC
 	node.OnConnect(func(client *centrifuge.Client) {
+		if onRPC != nil {
+			client.OnRPC(func(event centrifuge.RPCEvent, cb centrifuge.RPCCallback) {
+				data, err := onRPC(client.Context(), client.UserID(), event)
+				if err != nil {
+					cb(centrifuge.RPCReply{}, err)
+					return
+				}
+				cb(centrifuge.RPCReply{Data: data}, nil)
+			})
+		}
 		client.OnSubscribe(func(event centrifuge.SubscribeEvent, cb centrifuge.SubscribeCallback) {
 			name, err := channels.ParseName(event.Channel)
 			if err != nil {
