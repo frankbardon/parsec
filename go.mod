@@ -9,7 +9,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.60.0
-	github.com/quic-go/webtransport-go v0.10.0
+	github.com/quic-go/webtransport-go v0.11.0
 	github.com/redis/go-redis/v9 v9.20.0
 	github.com/spf13/afero v1.15.0
 	github.com/twitchtv/twirp v8.1.3+incompatible
