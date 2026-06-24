@@ -6,7 +6,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/centrifugal/centrifuge v0.38.0
 	github.com/centrifugal/protocol v0.19.2
-	github.com/coreos/go-oidc/v3 v3.18.0
+	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/quic-go/quic-go v0.60.0
 	github.com/quic-go/webtransport-go v0.11.0
