@@ -3,16 +3,17 @@
 // deployment that does not store its keyring in Secret Manager should not
 // pay for grpc-go, the GCP auth stack, or their transitive tree.
 //
-// The replace below points at the parsec checkout this module lives in.
-// It exists because parsec has no published tag yet; drop it (and pin a
-// real version) at the first release.
+// The module pins a published parsec version rather than replacing it with
+// the surrounding checkout, so `go get` resolves it for consumers. For local
+// development against an unreleased parsec, use a go workspace at the repo
+// root (`go work init . ./stores/gcpsecretmanager`) — consumers ignore it.
 module github.com/frankbardon/parsec/stores/gcpsecretmanager
 
 go 1.26.1
 
 require (
 	cloud.google.com/go/secretmanager v1.21.0
-	github.com/frankbardon/parsec v0.0.0
+	github.com/frankbardon/parsec v0.6.0
 	google.golang.org/api v0.297.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
@@ -81,5 +82,3 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688 // indirect
 )
-
-replace github.com/frankbardon/parsec => ../..

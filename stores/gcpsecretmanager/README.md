@@ -103,9 +103,17 @@ off the binding is fine — the store uses the existing secret.
 
 ## Development
 
-The module `replace`s parsec with the checkout it lives in, because
-parsec has no published tag yet. Drop the replace and pin a version at the
-first release.
+The module pins a published parsec version, so `go get` resolves it the way
+a consumer's build does. That means it builds against the released parsec,
+not your working tree — to develop the two together, create a go workspace
+at the repo root:
+
+```bash
+go work init . ./stores/gcpsecretmanager
+```
+
+The workspace is local only; `go get` and consumers ignore it. Keep
+`GOWORK=off` when verifying that the published module is go-gettable.
 
 ```bash
 go test ./...      # runs against an in-process fake Secret Manager
