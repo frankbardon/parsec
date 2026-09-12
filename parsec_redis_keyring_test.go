@@ -197,3 +197,90 @@ func TestRedisAuthAppliedToBuiltClient(t *testing.T) {
 		t.Error("no redis shard built for the broker")
 	}
 }
+
+// Two nodes rotating against one Redis must not lose each other's keys.
+// A save writes the whole snapshot, so a node holding a stale ring used to
+// erase whatever landed in between; the store now rejects that and the
+// mutation is re-applied against a fresh ring.
+func TestConcurrentRotationsDoNotLoseKeys(t *testing.T) {
+	mr := miniredis.RunT(t)
+
+	nodeA, err := New(Options{RedisAddr: mr.Addr(), Logger: bufLogger(&bytes.Buffer{})})
+	if err != nil {
+		t.Fatalf("New (A): %v", err)
+	}
+	nodeB, err := New(Options{RedisAddr: mr.Addr(), Logger: bufLogger(&bytes.Buffer{})})
+	if err != nil {
+		t.Fatalf("New (B): %v", err)
+	}
+
+	// B rotates. A's view of the store version is now stale — neither node
+	// is running Watch, which is exactly the window this guards.
+	keyB, err := nodeB.GenerateKey()
+	if err != nil {
+		t.Fatalf("node B GenerateKey: %v", err)
+	}
+
+	// A rotates from its stale ring. This must succeed by reloading and
+	// re-applying, not by overwriting B's key.
+	keyA, err := nodeA.GenerateKey()
+	if err != nil {
+		t.Fatalf("node A GenerateKey: %v", err)
+	}
+
+	final, err := auth.NewRedisKeyRingStore(redisClientFor(t, mr)).Load(context.Background())
+	if err != nil {
+		t.Fatalf("load final ring: %v", err)
+	}
+	for name, id := range map[string]string{"node B": keyB.ID, "node A": keyA.ID} {
+		if _, err := final.Get(id); err != nil {
+			t.Errorf("%s's key %q is missing from the persisted ring: %v", name, id, err)
+		}
+	}
+}
+
+// A promote from a stale node must also survive the reload-and-retry.
+func TestConcurrentPromoteSurvivesConflict(t *testing.T) {
+	mr := miniredis.RunT(t)
+
+	nodeA, err := New(Options{RedisAddr: mr.Addr(), Logger: bufLogger(&bytes.Buffer{})})
+	if err != nil {
+		t.Fatalf("New (A): %v", err)
+	}
+	nodeB, err := New(Options{RedisAddr: mr.Addr(), Logger: bufLogger(&bytes.Buffer{})})
+	if err != nil {
+		t.Fatalf("New (B): %v", err)
+	}
+
+	// A mints a key it intends to promote.
+	target, err := nodeA.GenerateKey()
+	if err != nil {
+		t.Fatalf("node A GenerateKey: %v", err)
+	}
+	// B rotates in between, making A stale again.
+	keyB, err := nodeB.GenerateKey()
+	if err != nil {
+		t.Fatalf("node B GenerateKey: %v", err)
+	}
+	if err := nodeA.PromoteKey(target.ID); err != nil {
+		t.Fatalf("node A PromoteKey: %v", err)
+	}
+
+	final, err := auth.NewRedisKeyRingStore(redisClientFor(t, mr)).Load(context.Background())
+	if err != nil {
+		t.Fatalf("load final ring: %v", err)
+	}
+	if got := final.ActiveID(); got != target.ID {
+		t.Errorf("active key = %q, want %q", got, target.ID)
+	}
+	if _, err := final.Get(keyB.ID); err != nil {
+		t.Errorf("node B's key %q lost by the promote: %v", keyB.ID, err)
+	}
+}
+
+func redisClientFor(t *testing.T, mr *miniredis.Miniredis) *redis.Client {
+	t.Helper()
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}

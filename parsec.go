@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/centrifugal/centrifuge"
@@ -68,8 +69,11 @@ type Options struct {
 	// non-nil. The directory is created with 0700; the file with 0600.
 	StateDir string
 
-	// KeyringPollInterval enables the mtime-poll watcher when > 0 and a
-	// StateDir is set. Default 5s.
+	// KeyringPollInterval bounds how stale this node's view of the keyring
+	// may get. With a StateDir it is the mtime-poll interval; with Redis it
+	// is how often the ring is re-read as a backstop for a pub/sub event
+	// that never arrived. Default 5s; negative disables the poll (redis
+	// then relies on pub/sub alone).
 	KeyringPollInterval time.Duration
 
 	// RedisClient enables multi-node mode. When set, channel registry,
@@ -322,6 +326,11 @@ type Parsec struct {
 	issuer       *auth.Issuer
 	logger       *slog.Logger
 	keyringStore auth.KeyRingStore // nil for ephemeral / explicit ring
+
+	// keyMu serializes ring mutations against reloads so a reload cannot
+	// land between a mutation and its persist, which would make a stale
+	// snapshot look current to the store's conflict check.
+	keyMu sync.Mutex
 
 	keyringPath string // empty when not file-backed
 
@@ -1158,7 +1167,12 @@ func buildKeyRing(opts Options, logger *slog.Logger) (*auth.KeyRing, auth.KeyRin
 		if prefix == "" {
 			prefix = "parsec"
 		}
-		store := auth.NewRedisKeyRingStore(opts.RedisClient).WithKeyPrefix(prefix)
+		// KeyringPollInterval doubles as the redis reconcile interval: it
+		// already means "how stale may this node's ring get", and the
+		// answer should not depend on which store backs it.
+		store := auth.NewRedisKeyRingStore(opts.RedisClient).
+			WithKeyPrefix(prefix).
+			WithReconcileInterval(opts.KeyringPollInterval)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		ring, bootstrapped, err := store.Ensure(ctx)
@@ -1439,23 +1453,62 @@ func (p *Parsec) Run(ctx context.Context) error {
 		}()
 	}
 	if p.keyringStore != nil {
-		go func() {
-			err := p.keyringStore.Watch(ctx, func(fresh *auth.KeyRing) {
-				if err := p.ring.LoadSnapshot(fresh.Snapshot()); err != nil {
-					p.logger.Warn("parsec: keyring reload error", "err", err)
-					return
-				}
-				p.logger.Info("parsec: keyring reloaded", "active_key_id", fresh.ActiveID())
-			})
-			if err != nil {
-				p.logger.Warn("parsec: keyring watch exited", "err", err)
-			}
-		}()
+		go p.runKeyringWatch(ctx)
 	}
 	if p.dlq != nil && p.metrics != nil {
 		go p.runDLQScrape(ctx)
 	}
 	return p.broker.Run(ctx)
+}
+
+// runKeyringWatch keeps the ring in step with the backing store for the
+// life of ctx.
+//
+// The watch is supervised: a store whose Watch returns — a dropped Redis
+// subscription that could not be re-established, a transport error — is
+// restarted with capped backoff. Letting it exit instead left the node
+// serving keys that could never be updated again, with one log line as
+// the only sign, so a rotation elsewhere in the fleet would silently fail
+// to reach it.
+func (p *Parsec) runKeyringWatch(ctx context.Context) {
+	const (
+		minBackoff = 250 * time.Millisecond
+		maxBackoff = 30 * time.Second
+	)
+	backoff := minBackoff
+	for ctx.Err() == nil {
+		started := time.Now()
+		err := p.keyringStore.Watch(ctx, func(fresh *auth.KeyRing) {
+			p.keyMu.Lock()
+			defer p.keyMu.Unlock()
+			if err := p.ring.LoadSnapshot(fresh.Snapshot()); err != nil {
+				p.logger.Warn("parsec: keyring reload error", "err", err)
+				return
+			}
+			p.logger.Info("parsec: keyring reloaded", "active_key_id", fresh.ActiveID())
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			p.logger.Warn("parsec: keyring watch exited, restarting", "err", err, "retry_in", backoff)
+		} else {
+			p.logger.Warn("parsec: keyring watch returned without error, restarting", "retry_in", backoff)
+		}
+		// A watch that ran for a while before failing gets a prompt retry;
+		// one failing immediately backs off.
+		if time.Since(started) > maxBackoff {
+			backoff = minBackoff
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+		}
+	}
 }
 
 // runDLQScrape periodically calls DLQ.Count(sink) for every registered
@@ -1518,6 +1571,13 @@ func (p *Parsec) ReloadKeys() error {
 	if p.keyringStore == nil {
 		return perr.New(perr.InvalidArgument, "no keyring store configured; pass Options.StateDir or Options.RedisClient")
 	}
+	p.keyMu.Lock()
+	defer p.keyMu.Unlock()
+	return p.reloadKeysLocked()
+}
+
+// reloadKeysLocked re-reads the ring. Callers hold keyMu.
+func (p *Parsec) reloadKeysLocked() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	fresh, err := p.keyringStore.Load(ctx)
@@ -1538,6 +1598,46 @@ func (p *Parsec) persistKeyRing() error {
 	return p.keyringStore.Save(ctx, p.ring)
 }
 
+// maxKeyMutationAttempts bounds the reload-and-reapply retry loop.
+const maxKeyMutationAttempts = 5
+
+// mutateKeys applies a ring mutation and persists it, re-applying against
+// a freshly loaded ring when a concurrent node rotated in between.
+//
+// A store-level save is a whole-snapshot write, so without this a node
+// holding a stale ring would erase another node's rotation. The shared
+// store detects that as auth.ErrKeyRingConflict; the fix is to reload and
+// redo the mutation, not to force the write.
+//
+// keyMu serializes mutations against the watcher's reloads on this node:
+// the conflict check compares versions, so a reload landing between apply
+// and save would make a stale write look current.
+func (p *Parsec) mutateKeys(apply func(*auth.KeyRing) error) error {
+	p.keyMu.Lock()
+	defer p.keyMu.Unlock()
+
+	var lastErr error
+	for attempt := range maxKeyMutationAttempts {
+		if err := apply(p.ring); err != nil {
+			return err
+		}
+		err := p.persistKeyRing()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, auth.ErrKeyRingConflict) {
+			return perr.Wrap(perr.Internal, "persist keyring", err)
+		}
+		lastErr = err
+		p.logger.Info("parsec: keyring changed underneath a rotation, reloading and retrying",
+			"attempt", attempt+1)
+		if rerr := p.reloadKeysLocked(); rerr != nil {
+			return perr.Wrap(perr.Internal, "reload keyring after conflict", rerr)
+		}
+	}
+	return perr.Wrap(perr.Internal, "persist keyring", lastErr)
+}
+
 // GenerateKey mints a new HS256 key (joins the ring as verify-only) and
 // persists if StateDir is configured.
 func (p *Parsec) GenerateKey() (auth.Key, error) {
@@ -1549,12 +1649,18 @@ func (p *Parsec) GenerateKey() (auth.Key, error) {
 // did not wire an explicit JWKSHandler, parsec auto-installs one so
 // the next /parsec/jwks.json hit picks the new public material up.
 func (p *Parsec) GenerateKeyAlg(alg auth.Alg) (auth.Key, error) {
-	k, err := p.ring.GenerateAlg(alg)
-	if err != nil {
-		return auth.Key{}, perr.Wrap(perr.InvalidArgument, "generate key", err)
-	}
-	if err := p.persistKeyRing(); err != nil {
-		return auth.Key{}, perr.Wrap(perr.Internal, "persist keyring", err)
+	var k auth.Key
+	// On a conflict retry the key is minted again against the reloaded
+	// ring, so the returned key is always the one that was persisted.
+	if err := p.mutateKeys(func(r *auth.KeyRing) error {
+		gen, gerr := r.GenerateAlg(alg)
+		if gerr != nil {
+			return perr.Wrap(perr.InvalidArgument, "generate key", gerr)
+		}
+		k = gen
+		return nil
+	}); err != nil {
+		return auth.Key{}, err
 	}
 	if p.opts.JWKSHandler == nil && k.Alg.IsAsymmetric() {
 		p.opts.JWKSHandler = auth.JWKSHandler(p.ring)
@@ -1565,11 +1671,13 @@ func (p *Parsec) GenerateKeyAlg(alg auth.Alg) (auth.Key, error) {
 
 // PromoteKey makes id the active signing key.
 func (p *Parsec) PromoteKey(id string) error {
-	if err := p.ring.Promote(id); err != nil {
-		return perr.Wrap(perr.InvalidArgument, "promote key", err)
-	}
-	if err := p.persistKeyRing(); err != nil {
-		return perr.Wrap(perr.Internal, "persist keyring", err)
+	if err := p.mutateKeys(func(r *auth.KeyRing) error {
+		if err := r.Promote(id); err != nil {
+			return perr.Wrap(perr.InvalidArgument, "promote key", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	p.metrics.KeyRotationsTotal.WithLabelValues(metrics.KeyActionPromoted).Inc()
 	return nil
@@ -1577,11 +1685,13 @@ func (p *Parsec) PromoteKey(id string) error {
 
 // RetireKey removes id from verification.
 func (p *Parsec) RetireKey(id string) error {
-	if err := p.ring.Retire(id); err != nil {
-		return perr.Wrap(perr.InvalidArgument, "retire key", err)
-	}
-	if err := p.persistKeyRing(); err != nil {
-		return perr.Wrap(perr.Internal, "persist keyring", err)
+	if err := p.mutateKeys(func(r *auth.KeyRing) error {
+		if err := r.Retire(id); err != nil {
+			return perr.Wrap(perr.InvalidArgument, "retire key", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	p.metrics.KeyRotationsTotal.WithLabelValues(metrics.KeyActionRetired).Inc()
 	return nil
