@@ -29,7 +29,7 @@ focused contract; load only what you need.
 | [`.claude/context/architecture.md`](.claude/context/architecture.md) | Repo layout, library-first rule, surface parity, manager↔broker contract, filesystem (afero), descriptor envelopes |
 | [`.claude/context/channels.md`](.claude/context/channels.md) | Channel name grammar, lifecycle, TTL |
 | [`.claude/context/errors.md`](.claude/context/errors.md) | Coded errors (`PARSEC_*`), RPC mapping |
-| [`.claude/context/auth.md`](.claude/context/auth.md) | JWT, key rotation, scopes, OIDC, refresh-token flow |
+| [`.claude/context/auth.md`](.claude/context/auth.md) | JWT, key rotation, scopes, OIDC, refresh-token flow, keyring stores (file / Redis / Secret Manager) |
 | [`.claude/context/tokenbroker.md`](.claude/context/tokenbroker.md) | Token broker — issuance, ACL, revocation |
 | [`.claude/context/cache.md`](.claude/context/cache.md) | Request-hash cache |
 | [`.claude/context/sinks.md`](.claude/context/sinks.md) | Sink retry policy + DLQ |
@@ -73,6 +73,7 @@ Any change to a public surface MUST update its docs in the same PR.
 | New ingress point | `service.Service` call site consulting `Parsec.CheckRateLimit` before doing work; documented bucket key; entry in `docs/src/ops/rate-limiting.md` |
 | New telemetry Snapshot field | `telemetry/telemetry.go` Source method + Aggregator sum branch + corresponding `parsec_telemetry_*` gauge in `telemetry/prom.go` + metric-reference row in `docs/src/ops/telemetry-alerts.md` |
 | New severity level | `telemetry/alerts.go` Severity const + `Valid()` branch + table row in `docs/src/ops/telemetry-alerts.md` |
+| New nested Go module under `stores/` | add it to the Makefile's `SUBMODULES` (a nested module is invisible to `go test ./...`, so CI never builds, tests or lints it otherwise) + a `replace` back to the checkout until parsec is tagged + entry in `.claude/context/architecture.md` repo layout. Nothing in the root module may import it — the embedder passes the adapter in through `Options` |
 | New `auth.KeyRingStore` impl | implement all three interface methods (`Load` / `Save` / `Watch`) + `Watch` MUST supervise itself and return only on ctx cancel — a watch that exits leaves the node serving keys it can never update again + tests written to fail without their fix (assert the failure mode, not just the happy path). **If the store is shared across nodes**, also: `Load` pairs the snapshot with the revision it belongs to; `Save` is a compare-and-set against the last-loaded revision, returning `auth.ErrKeyRingConflict` instead of overwriting a concurrent rotation; a periodic reconcile so a dropped change notification still converges; bootstrap is a CAS against "still empty" so concurrent first boots adopt one ring rather than the loser signing with overwritten keys + entry in `docs/src/ops/deployment.md` + `.claude/context/auth.md` |
 | New `tokenbroker.RevocationStore` impl | implement all four interface methods + apply `MaxTTL` semantics + tests for token-scope + user-scope round trips + entry in `docs/src/ops/token-broker.md` |
 | New `cache.Cache` backend | implement all 7 interface methods + return a stable `cache.Stats` shape + optional `cache.BackendReporter` for manifest label + entry in the backend table in `docs/src/ops/cache.md` |

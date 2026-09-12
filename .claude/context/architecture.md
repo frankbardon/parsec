@@ -19,10 +19,24 @@ internal/cli/          # CLI command bodies
 internal/codegen/      # parsec-gen Go + TS emitters (driven from schema registry)
 internal/server/       # HTTP mux (twirp + websocket + sse + healthz)
 internal/rpcclient/    # CLI adapter onto the generated Twirp JSON client
+stores/                # adapters in their own Go modules, one per heavy SDK
+  gcpsecretmanager/    # auth.KeyRingStore backed by Google Secret Manager
 cmd/parsec/            # main.go assembler
 cmd/parsec-gen/        # codegen binary; reads schema registry, emits Go/TS bindings
 docs/                  # mdBook source
 ```
+
+## Nested modules
+
+An adapter whose SDK would bloat the root module's dependency graph lives
+under `stores/<name>/` as its own Go module, depending on parsec rather
+than the other way round. Nothing in the root module may import one — the
+embedder constructs the adapter and passes it in through `Options`.
+
+`go test ./...` does not descend into a nested module, so every new one
+goes into the Makefile's `SUBMODULES` list or it is never built, tested or
+linted by CI. Until parsec has a published tag, each carries a `replace`
+pointing at the checkout.
 
 ## Library-first
 

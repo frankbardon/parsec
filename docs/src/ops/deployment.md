@@ -46,6 +46,7 @@ so an unreachable Redis also fails the boot.
 |---|---|---|
 | `<state-dir>/keyring.json` | HMAC signing keys, single-node only | Yes |
 | `<prefix>:keyring` in Redis | HMAC signing keys when Redis is configured | Only if Redis persists — see below |
+| `projects/<p>/secrets/<id>` in Google Secret Manager | Signing keys when `Options.KeyRingStore` is the [Secret Manager store](gcp-secret-manager.md) | Yes |
 | In-memory channel map | Open channels, private records | No |
 | In-memory subscriber set | Live websocket connections | No |
 
@@ -89,6 +90,33 @@ must be re-created with fresh tokens.
 
 If that is a problem for your use case, Parsec is the wrong primitive
 — use a real durable queue.
+
+## Keyring stores
+
+The ring is resolved in this order, and the first one set wins:
+
+| Precedence | Configured by | Shared across nodes? |
+|---|---|---|
+| 1 | `Options.KeyRing` (a ring you built yourself) | You own it |
+| 2 | `Options.KeyRingStore` (e.g. [Google Secret Manager](gcp-secret-manager.md)) | Yes |
+| 3 | `RedisClient` / `redis.addr` | Yes |
+| 4 | `--state-dir` → `<state-dir>/keyring.json` | No |
+| 5 | nothing — an ephemeral ring, logged loudly | No |
+
+`Options.KeyRingStore` is a library-only option: it takes a constructed
+store, which the CLI has no way to spell in a flag. `parsec serve` from
+this repo therefore reaches levels 3–5 only. An embedder wiring their own
+`main` gets the rest — see
+[Google Secret Manager](gcp-secret-manager.md) for the one that ships.
+
+Whichever store wins, it holds the **only** copy of the signing keys.
+Anything lower in the table is ignored for key storage, and Parsec warns
+at boot when you set two of them, because the ignored one looks like a
+backup and is not one.
+
+Every shared store reports its revision on `parsec_keyring_version`.
+Nodes agreeing on the ring report the same number; a node stuck on an old
+number is serving keys the rest of the fleet has moved past.
 
 ## `--state-dir`
 

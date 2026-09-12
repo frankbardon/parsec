@@ -59,6 +59,7 @@
 - [Deployment](ops/deployment.md)
 - [Configuration File](ops/config.md)
 - [Key Rotation Runbook](ops/key-rotation.md)
+- [Keyring in Google Secret Manager](ops/gcp-secret-manager.md)
 - [Refresh-Token Rotation](ops/refresh-rotation.md)
 - [Asymmetric Signing (RS256 / EdDSA / ES256 / ES384)](ops/asymmetric-signing.md)
 - [OIDC Bridge](ops/oidc.md)

@@ -298,6 +298,7 @@ and [docs/src/ops/config.md](docs/src/ops/config.md).
 |---|---|---|
 | **Single-node** | In-memory channel registry, in-memory keyring (or file with `--state-dir`), in-memory DLQ, in-memory rate limiter | Default. No Redis required. |
 | **Clustered** | Redis-backed broker (centrifuge.RedisBroker) + presence, Redis HASH channel registry with pub/sub event bus, Redis-watched keyring, Redis Streams DLQ, Redis sliding-window rate limiter | Set `Options.RedisClient` (or `--redis-addr`). Every subsystem switches automatically. |
+| **Keyring elsewhere** | Signing keys in Google Secret Manager instead of `keyring.json` or Redis — shared across nodes, rotation propagates by poll | `Options.KeyRingStore = gcpsecretmanager.New(...)`, from the `stores/gcpsecretmanager` module. |
 | **Multi-region** | Cross-region keyring sync via pub/sub bridge, manifest peer list, region label on metrics/logs | Run `parsec-keys-sync` between regions; set `Options.Region` and `Options.Peers`. |
 
 ---
@@ -450,6 +451,7 @@ internal/metrics/         # Prometheus collectors
 internal/rpcclient/       # CLI adapter onto the Twirp JSON client
 internal/server/          # HTTP mux: twirp + ws + wt + sse + admin + healthz
 internal/tracing/         # OTel tracer (no-op default)
+stores/gcpsecretmanager/  # keyring in Google Secret Manager (separate Go module)
 cmd/parsec/               # main.go — thin entry point
 cmd/parsec-keys-sync/     # multi-region keyring pub/sub bridge daemon
 Dockerfile                # multi-stage; ships gcr.io/distroless/static

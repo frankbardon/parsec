@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -88,9 +87,14 @@ func (s *RedisKeyRingStore) WithReconcileInterval(d time.Duration) *RedisKeyRing
 // reconcile read, a dropped subscription. Watch keeps running; the hook
 // exists so callers can count them.
 func (s *RedisKeyRingStore) WithErrorHook(f func(error)) *RedisKeyRingStore {
-	s.onError = f
+	s.SetErrorHook(f)
 	return s
 }
+
+// SetErrorHook satisfies KeyRingErrorReporter so the hook can be
+// installed against the interface, without the caller knowing which
+// store it holds.
+func (s *RedisKeyRingStore) SetErrorHook(f func(error)) { s.onError = f }
 
 func (s *RedisKeyRingStore) keyringKey() string { return s.keyPrefix + ":keyring" }
 func (s *RedisKeyRingStore) versionKey() string { return s.keyPrefix + ":keyring:version" }
@@ -142,7 +146,7 @@ func (s *RedisKeyRingStore) Load(ctx context.Context) (*KeyRing, error) {
 			// belong to either version. Read again.
 			continue
 		}
-		ring, err := decodeKeyRing([]byte(body))
+		ring, err := DecodeKeyRing([]byte(body))
 		if err != nil {
 			return nil, err
 		}
@@ -164,21 +168,6 @@ func (s *RedisKeyRingStore) readVersion(ctx context.Context) (int64, error) {
 	return v, nil
 }
 
-func decodeKeyRing(body []byte) (*KeyRing, error) {
-	var snap Snapshot
-	if err := json.Unmarshal(body, &snap); err != nil {
-		return nil, fmt.Errorf("decode keyring: %w", err)
-	}
-	if !supportedFormatVersion(snap.FormatVersion) {
-		return nil, fmt.Errorf("keyring format_version %q is not supported", snap.FormatVersion)
-	}
-	r := NewKeyRing()
-	if err := r.LoadSnapshot(snap); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
 // Save persists ring, but only if the stored version still matches the one
 // this store last read. On a mismatch it writes nothing and returns
 // ErrKeyRingConflict: the ring being saved was derived from an older
@@ -189,9 +178,7 @@ func decodeKeyRing(body []byte) (*KeyRing, error) {
 // that never loaded (version unknown) is serialized rather than
 // interleaved.
 func (s *RedisKeyRingStore) Save(ctx context.Context, r *KeyRing) error {
-	snap := r.Snapshot()
-	snap.FormatVersion = keyringFormatVersion
-	body, err := json.Marshal(snap)
+	body, err := EncodeKeyRing(r)
 	if err != nil {
 		return err
 	}

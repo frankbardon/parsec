@@ -18,15 +18,29 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
+# SUBMODULES are the nested Go modules in this repo. They exist to keep a
+# heavy SDK out of the root module's dependency graph, which only works if
+# they are built, tested and linted like everything else — `go test ./...`
+# in the root module does not descend into a nested module.
+SUBMODULES=stores/gcpsecretmanager
+
 build:
 	$(GO) build $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/parsec
 	$(GO) build $(BUILD_FLAGS) -o $(BUILD_DIR)/parsec-gen ./cmd/parsec-gen
+	@for m in $(SUBMODULES); do \
+		echo "==> $$m"; \
+		(cd $$m && $(GO) build ./...) || exit 1; \
+	done
 
 clean:
 	rm -rf $(BUILD_DIR) coverage.out
 
 test:
 	$(GO) test ./...
+	@for m in $(SUBMODULES); do \
+		echo "==> $$m"; \
+		(cd $$m && $(GO) test ./...) || exit 1; \
+	done
 
 # test-integration runs the full suite with the race detector enabled and
 # a tightened timeout. Designed for CI; locally `make test` is faster.
@@ -34,6 +48,10 @@ test:
 # CGO_ENABLED=0 default applied above.
 test-integration:
 	CGO_ENABLED=1 $(GO) test -race -count=1 -timeout=120s ./...
+	@for m in $(SUBMODULES); do \
+		echo "==> $$m"; \
+		(cd $$m && CGO_ENABLED=1 $(GO) test -race -count=1 -timeout=120s ./...) || exit 1; \
+	done
 
 cover:
 	$(GO) test -coverprofile=coverage.out ./...
@@ -41,6 +59,9 @@ cover:
 
 fmt:
 	$(GO) fmt ./...
+	@for m in $(SUBMODULES); do \
+		(cd $$m && $(GO) fmt ./...) || exit 1; \
+	done
 
 # fmt-check is the read-only counterpart of `fmt`: same rules, no writes.
 # Two details matter here.
@@ -62,11 +83,19 @@ fmt-check:
 
 vet:
 	$(GO) vet ./...
+	@for m in $(SUBMODULES); do \
+		echo "==> $$m"; \
+		(cd $$m && $(GO) vet ./...) || exit 1; \
+	done
 
 # fmt-check runs first: neither vet nor staticcheck looks at formatting,
 # which is how 32 files drifted out of format unnoticed.
 lint: fmt-check vet
 	$(GO) run honnef.co/go/tools/cmd/staticcheck@latest ./...
+	@for m in $(SUBMODULES); do \
+		echo "==> $$m"; \
+		(cd $$m && $(GO) run honnef.co/go/tools/cmd/staticcheck@latest ./...) || exit 1; \
+	done
 
 # Regenerate protobuf + Twirp bindings from rpc/service.proto.
 # Requires `protoc`, `protoc-gen-go`, and `protoc-gen-twirp` on PATH.

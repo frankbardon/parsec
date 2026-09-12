@@ -64,16 +64,31 @@ type Options struct {
 	// (logged loudly so the operator knows tokens won't survive restart).
 	KeyRing *auth.KeyRing
 
+	// KeyRingStore plugs in a keyring backend parsec.New does not build
+	// itself — the Google Secret Manager store in
+	// stores/gcpsecretmanager, or an embedder's own. It outranks
+	// RedisClient and StateDir: an explicitly constructed store is a
+	// deliberate choice, and silently demoting it to keyring.json would
+	// scatter the signing keys across the fleet.
+	//
+	// parsec.New bootstraps through auth.EnsureKeyRingStore, so a store
+	// shared across nodes must implement auth.KeyRingBootstrapper (or
+	// return auth.ErrKeyRingConflict from the losing Save) rather than
+	// let two nodes each mint a ring. Ignored if KeyRing is non-nil.
+	KeyRingStore auth.KeyRingStore
+
 	// StateDir, when set, makes parsec.New load (or bootstrap) the
-	// keyring from <StateDir>/keyring.json. Ignored if KeyRing is
-	// non-nil. The directory is created with 0700; the file with 0600.
+	// keyring from <StateDir>/keyring.json. Ignored if KeyRing or
+	// KeyRingStore is non-nil. The directory is created with 0700; the
+	// file with 0600.
 	StateDir string
 
 	// KeyringPollInterval bounds how stale this node's view of the keyring
 	// may get. With a StateDir it is the mtime-poll interval; with Redis it
 	// is how often the ring is re-read as a backstop for a pub/sub event
 	// that never arrived. Default 5s; negative disables the poll (redis
-	// then relies on pub/sub alone).
+	// then relies on pub/sub alone). A KeyRingStore built by the embedder
+	// carries its own interval — this one does not reach it.
 	KeyringPollInterval time.Duration
 
 	// RedisClient enables multi-node mode. When set, channel registry,
@@ -593,8 +608,8 @@ func New(opts Options) (*Parsec, error) {
 	// Count reconcile failures and dropped subscriptions. Installed here
 	// rather than in buildKeyRing because the metrics bundle does not exist
 	// that early; safe because no watch is running until Run.
-	if rs, ok := keyringStore.(*auth.RedisKeyRingStore); ok {
-		rs.WithErrorHook(func(err error) {
+	if rep, ok := keyringStore.(auth.KeyRingErrorReporter); ok {
+		rep.SetErrorHook(func(err error) {
 			m.KeyringReconcileErrors.Inc()
 			logger.Warn("parsec: keyring watch error", "err", err)
 		})
@@ -1165,12 +1180,44 @@ func warnRedisDurability(opts Options, logger *slog.Logger) {
 	}
 }
 
-// buildKeyRing resolves the KeyRing precedence: explicit > Redis >
-// StateDir > ephemeral. Returns the chosen ring, the keyring store
-// (for reload), and the on-disk path (empty when no file persistence).
+// buildKeyRing resolves the KeyRing precedence: explicit ring >
+// explicit store > Redis > StateDir > ephemeral. Returns the chosen ring,
+// the keyring store (for reload), and the on-disk path (empty when no
+// file persistence).
 func buildKeyRing(opts Options, logger *slog.Logger) (*auth.KeyRing, auth.KeyRingStore, string, error) {
 	if opts.KeyRing != nil {
 		return opts.KeyRing, nil, "", nil
+	}
+	if opts.KeyRingStore != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		ring, bootstrapped, err := auth.EnsureKeyRingStore(ctx, opts.KeyRingStore)
+		if err != nil {
+			return nil, nil, "", perr.Wrap(perr.Internal, "load keyring from store", err)
+		}
+		if bootstrapped {
+			logger.Warn("parsec: bootstrapped a new keyring in the configured key ring store",
+				"active_key_id", ring.ActiveID())
+		} else {
+			logger.Info("parsec: loaded keyring from the configured key ring store",
+				"active_key_id", ring.ActiveID())
+		}
+		if opts.StateDir != "" {
+			// Same trap as the Redis branch: a StateDir in the config
+			// reads like a durable backup of the keys, and it is not one.
+			logger.Warn("parsec: StateDir is set but Options.KeyRingStore holds the keyring; "+
+				"keyring.json is not read or written and the store is the only copy of the signing keys",
+				"state_dir", opts.StateDir)
+		}
+		if opts.RedisClient != nil {
+			// Redis still backs the broker, registry, DLQ and rate
+			// limiter here — only the keyring moved. Worth saying out
+			// loud, because "we run Redis" is otherwise a reasonable
+			// reason to believe the keys are in it.
+			logger.Warn("parsec: Options.KeyRingStore outranks redis for the keyring; " +
+				"redis keeps every other subsystem but holds no copy of the signing keys")
+		}
+		return ring, opts.KeyRingStore, "", nil
 	}
 	if opts.RedisClient != nil {
 		prefix := opts.RedisKeyPrefix
@@ -1511,9 +1558,9 @@ func (p *Parsec) observeKeyring() {
 
 	// Only a shared store carries a revision. File and ephemeral rings
 	// report -1 rather than a number that would look comparable.
-	version := float64(-1)
-	if rs, ok := p.keyringStore.(*auth.RedisKeyRingStore); ok {
-		version = float64(rs.Version())
+	version := float64(auth.KeyRingVersionUnknown)
+	if v, ok := p.keyringStore.(auth.KeyRingVersioner); ok {
+		version = float64(v.Version())
 	}
 	p.metrics.KeyringVersion.Set(version)
 
@@ -1654,7 +1701,7 @@ func (p *Parsec) runEventBridge(ctx context.Context, events <-chan channels.Even
 // error if no store is configured (i.e. explicit ring or ephemeral).
 func (p *Parsec) ReloadKeys() error {
 	if p.keyringStore == nil {
-		return perr.New(perr.InvalidArgument, "no keyring store configured; pass Options.StateDir or Options.RedisClient")
+		return perr.New(perr.InvalidArgument, "no keyring store configured; pass Options.StateDir, Options.RedisClient or Options.KeyRingStore")
 	}
 	p.keyMu.Lock()
 	defer p.keyMu.Unlock()
