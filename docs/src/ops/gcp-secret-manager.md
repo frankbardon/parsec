@@ -164,6 +164,22 @@ versions, and keep the project's audit log for it.
 | `ErrorHook` | — | overwritten by parsec when the store is passed to `Options.KeyRingStore` |
 | `ClientOptions` | — | passed to the Secret Manager client verbatim |
 
+## Verifying against a real project
+
+The store's test suite runs against an in-process fake, which is fast and
+hermetic but can only encode what its author believed Secret Manager
+does. The compare-and-set that stops two nodes from overwriting each
+other's rotations rests on `UpdateSecret` enforcing the secret's etag, so
+that belief is worth checking against the real service before trusting a
+fleet to it:
+
+```bash
+PARSEC_GCP_PROJECT=my-scratch-project PARSEC_GCP_CREDENTIALS=/path/to/sa.json   go test -tags gcplive -run TestLive -v ./stores/gcpsecretmanager/...
+```
+
+Each test creates its own secret and deletes it afterwards. Use a scratch
+project — they write real versions to a real secret.
+
 ## Observability
 
 | Metric | With this store |

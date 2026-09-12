@@ -108,5 +108,20 @@ parsec has no published tag yet. Drop the replace and pin a version at the
 first release.
 
 ```bash
-go test ./...      # the suite runs against an in-process fake Secret Manager
+go test ./...      # runs against an in-process fake Secret Manager
 ```
+
+The fake implements the three behaviors the store's correctness rests on:
+etag-checked `UpdateSecret`, append-only versions, and a `latest` alias
+that resolves to the most recently created version whatever its state. It
+is still a fake — it encodes what its author believed the API does. The
+`gcplive` tests check those beliefs against the real service, above all
+that a stale etag is actually refused:
+
+```bash
+PARSEC_GCP_PROJECT=my-scratch-project PARSEC_GCP_CREDENTIALS=/path/to/sa.json   go test -tags gcplive -run TestLive -v ./...
+```
+
+They create a uniquely named secret per test and delete it on the way
+out, but they do write to a real project — point them at a scratch one.
+They are excluded from every normal build and from CI.

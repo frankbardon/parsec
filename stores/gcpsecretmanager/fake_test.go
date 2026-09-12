@@ -32,9 +32,21 @@ type fakeSecretManager struct {
 	secrets map[string]*fakeSecret
 
 	// faults injects an error for the named RPC. It runs under the lock,
-	// before the call is served, and is how a test makes a poll fail
-	// without tearing the server down.
+	// before the call is served, and is how a test makes a poll fail — or
+	// mutates state mid-call to stage a race — without tearing the server
+	// down. It must not re-enter the fake's own locking helpers.
 	faults func(method string) error
+
+	// etagMismatch is what UpdateSecret returns when the supplied etag is
+	// stale. It defaults to the documented code; tests flip it because
+	// Google's own docs have described both over time, and a store that
+	// only recognized one would treat a lost race as a hard failure.
+	//
+	// https://cloud.google.com/secret-manager/docs/etags: "If an ETag is
+	// provided and matches the current resource ETag, the request
+	// succeeds; otherwise, it fails with a FAILED_PRECONDITION error and
+	// an HTTP status code 400."
+	etagMismatch codes.Code
 
 	calls map[string]int
 }
@@ -53,8 +65,9 @@ type fakeVersion struct {
 
 func newFakeSecretManager() *fakeSecretManager {
 	return &fakeSecretManager{
-		secrets: map[string]*fakeSecret{},
-		calls:   map[string]int{},
+		secrets:      map[string]*fakeSecret{},
+		calls:        map[string]int{},
+		etagMismatch: codes.FailedPrecondition,
 	}
 }
 
@@ -69,6 +82,22 @@ func (f *fakeSecretManager) enter(method string) (func(), error) {
 		}
 	}
 	return f.mu.Unlock, nil
+}
+
+// setEtagMismatchCode chooses what a stale etag looks like on the wire.
+func (f *fakeSecretManager) setEtagMismatchCode(c codes.Code) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.etagMismatch = c
+}
+
+// bumpEtag moves the secret's etag as a concurrent writer would. It
+// assumes the caller already holds the lock — it is called from inside a
+// faults hook.
+func (f *fakeSecretManager) bumpEtagLocked(name string) {
+	if sec, ok := f.secrets[name]; ok {
+		sec.etag++
+	}
 }
 
 func (f *fakeSecretManager) setFaults(fn func(method string) error) {
@@ -130,7 +159,7 @@ func (f *fakeSecretManager) UpdateSecret(_ context.Context, req *secretmanagerpb
 		return nil, status.Errorf(codes.NotFound, "secret %s not found", name)
 	}
 	if tag := req.GetSecret().GetEtag(); tag != "" && tag != etagOf(sec.etag) {
-		return nil, status.Errorf(codes.Aborted, "etag mismatch: have %s, got %s", etagOf(sec.etag), tag)
+		return nil, status.Errorf(f.etagMismatch, "etag mismatch: have %s, got %s", etagOf(sec.etag), tag)
 	}
 	for _, path := range req.GetUpdateMask().GetPaths() {
 		if path != "annotations" {
