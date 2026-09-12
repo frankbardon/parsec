@@ -55,17 +55,30 @@ USAGE:
    parsec serve [options]
 
 OPTIONS:
-   --addr string, -a string  Listen address (host:port) (default: ":8000")
-   --state-dir string        Directory holding keyring.json (created with 0700 if missing). If unset, the keyring is ephemeral. [$PARSEC_STATE_DIR]
-   --mgmt-subject string     Subject (sub claim) for the bootstrap mgmt token printed at boot (default: "operator") [$PARSEC_MGMT_SUBJECT]
-   --mgmt-ttl duration       Lifetime of the bootstrap mgmt token printed at boot (default: 24h0m0s) [$PARSEC_MGMT_TTL]
-   --keyring-poll duration   Interval between keyring.json mtime checks. 0 disables polling. (default: 5s) [$PARSEC_KEYRING_POLL]
+   --addr string, -a string    Listen address (host:port) (default: ":8000")
+   --config string, -c string  Path to a YAML config file. CLI flags + env vars override file values. [$PARSEC_CONFIG]
+   --state-dir string          Directory holding keyring.json (created with 0700 if missing). If unset, the keyring is ephemeral. [$PARSEC_STATE_DIR]
+   --redis-addr string         Shared Redis for multi-node mode: host:port or a redis://, rediss://, tcp:// or unix:// URL. Enables the redis-backed keyring, channel registry, DLQ and rate limiter. [$PARSEC_REDIS_ADDR]
+   --redis-key-prefix string   Namespace for every parsec key in Redis. Default "parsec". [$PARSEC_REDIS_KEY_PREFIX]
+   --mgmt-subject string       Subject (sub claim) for the bootstrap mgmt token printed at boot (default: "operator") [$PARSEC_MGMT_SUBJECT]
+   --mgmt-ttl duration         Lifetime of the bootstrap mgmt token printed at boot (default: 24h0m0s) [$PARSEC_MGMT_TTL]
+   --keyring-poll duration     How stale this node's view of the keyring may get: the keyring.json mtime check interval, or with redis the interval between reconcile reads that catch a missed rotation event. 0 uses the default, negative disables it. (default: 5s) [$PARSEC_KEYRING_POLL]
    --no-auth                 Disable bearer auth on the management RPC. DANGEROUS — local development only. [$PARSEC_NO_AUTH]
    --help, -h                show help
 
 GLOBAL OPTIONS:
    --json  Output the parsec manifest as a descriptor envelope
 ```
+
+Redis credentials and TLS are config-file only (`redis.username`,
+`redis.password`, `redis.tls.*`) — see
+[configuration](../ops/config.md#redis). Secrets do not belong in a
+process listing, though a password embedded in the `--redis-addr` URL is
+honored if you insist.
+
+`--redis-addr` makes Redis the sole home of the signing keys, and
+`--state-dir` is then ignored for key storage. Redis needs AOF on and
+eviction off: [Redis durability](../ops/deployment.md#redis-durability).
 
 ## See also
 

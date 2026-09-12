@@ -19,20 +19,68 @@ of concurrent websockets per core — single-node carries a lot of load.
 
 ## Topology: clustered
 
-Point `Options.RedisClient` (or the YAML `redis.addr` field) at a
-shared Redis and the broker, channel registry, keyring, DLQ, and rate
-limiter all switch to their Redis-backed implementations. Multiple
-Parsec nodes then share the same truth about open channels, keys, and
-sink failures. See [key rotation](key-rotation.md#multi-node-deployments)
-for the rotation walkthrough.
+Point `--redis-addr`, the YAML `redis.addr` field, or
+`Options.RedisClient` at a shared Redis and the broker, channel registry,
+keyring, DLQ, and rate limiter all switch to their Redis-backed
+implementations. Multiple Parsec nodes then share the same truth about
+open channels, keys, and sink failures. See
+[key rotation](key-rotation.md#multi-node-deployments) for the rotation
+walkthrough.
+
+Address forms: `host:port`, or a `redis://`, `rediss://`, `tcp://` or
+`unix://` URL. Credentials can ride in the URL
+(`redis://user:pass@host:6379/0`) or come from the `redis.username` /
+`redis.password` / `redis.db` fields, which win over the URL so a secret
+can be injected from the environment. `rediss://` implies TLS with system
+roots; use the `redis.tls` section for a private CA. Sentinel and cluster
+URLs are rejected — build the client yourself and pass
+`Options.RedisClient`.
+
+A malformed address fails at startup rather than surfacing later as a
+dial error, and Parsec pings Redis before building anything on top of it,
+so an unreachable Redis also fails the boot.
 
 ## Required state
 
 | Path | What | Survives restart? |
 |---|---|---|
-| `<state-dir>/keyring.json` | HMAC signing keys | Yes |
+| `<state-dir>/keyring.json` | HMAC signing keys, single-node only | Yes |
+| `<prefix>:keyring` in Redis | HMAC signing keys when Redis is configured | Only if Redis persists — see below |
 | In-memory channel map | Open channels, private records | No |
 | In-memory subscriber set | Live websocket connections | No |
+
+## Redis durability
+
+**When Redis is configured it holds the keyring, and it is the only
+copy.** Redis wins the keyring precedence, so `--state-dir` is ignored
+for key storage — Parsec logs a warning if you set both, because a
+`state_dir` in the config looks like a backup and is not one.
+
+An empty keyspace is indistinguishable from a first boot: Parsec
+bootstraps a brand-new ring, and every token in the fleet — including the
+bootstrap mgmt token in your secret manager — stops verifying. Two
+settings prevent that:
+
+```bash
+redis-server --appendonly yes --maxmemory-policy noeviction
+```
+
+| Setting | Why |
+|---|---|
+| `appendonly yes` | Without AOF, a restart loses writes back to the last RDB snapshot. Default save points can be an hour stale, and a keyring write is a single key — exactly the change a snapshot interval misses. |
+| `maxmemory-policy noeviction` | The keyring key carries no TTL, but an `allkeys-*` policy evicts it anyway once `maxmemory` is reached. A `volatile-*` policy is also safe, since the key is never given an expiry. |
+
+Parsec checks both at boot and warns if they look wrong. The check is
+advisory: managed providers often block `CONFIG GET`, and an unreadable
+setting is skipped rather than guessed at, so verify it yourself on a
+managed instance.
+
+Back the ring up out of band before you need it:
+
+```bash
+parsec keys export --redis-addr <addr> > keyring-backup.json   # 0600 it
+parsec keys import --redis-addr <addr> < keyring-backup.json    # restore
+```
 
 The manifest reports `"persistence": "in-memory"` so clients can
 discover the stance without reading docs. The contract: a restart wipes
@@ -44,7 +92,9 @@ If that is a problem for your use case, Parsec is the wrong primitive
 
 ## `--state-dir`
 
-Always pass it in production. Without `--state-dir`, the keyring is
+Always pass it in production **unless Redis is configured**, in which
+case Redis holds the keyring and this flag does nothing for key storage.
+Without either, the keyring is
 ephemeral and every restart mints a new bootstrap token under a brand
 new active key. Existing browser clients can no longer refresh and
 must re-authenticate. With `--state-dir`, the ring survives the
@@ -64,7 +114,9 @@ values via `Options`.
 | `PARSEC_STATE_DIR` | "" | Same as `--state-dir`. |
 | `PARSEC_MGMT_SUBJECT` | `operator` | Subject claim on the bootstrap mgmt token. |
 | `PARSEC_MGMT_TTL` | `24h` | Bootstrap mgmt TTL. |
-| `PARSEC_KEYRING_POLL` | `5s` | mtime-poll interval. `0` disables polling. |
+| `PARSEC_KEYRING_POLL` | `5s` | How stale this node's keyring view may get: mtime-poll interval, or the Redis reconcile interval. Negative disables it. |
+| `PARSEC_REDIS_ADDR` | "" | Same as `--redis-addr`. |
+| `PARSEC_REDIS_KEY_PREFIX` | `parsec` | Same as `--redis-key-prefix`. |
 | `PARSEC_NO_AUTH` | unset | Dangerous; disables the bearer middleware. Dev only. |
 | `PARSEC_SERVER` | `http://localhost:8000` | Default `--server` for the client subcommands. |
 | `PARSEC_TOKEN` | "" | Mgmt bearer for the client subcommands. |
@@ -93,12 +145,13 @@ restarts — fetch it once, store it in your secret manager, move on.
 
 | Endpoint | Purpose |
 |---|---|
-| `/healthz` | Liveness probe. Returns 200 once `node.Run` has succeeded. |
+| `/healthz` | Liveness probe. Returns 200 from the moment the HTTP listener is up — it does **not** wait for `node.Run` or check Redis, so treat it as "the process is alive", not "the node is ready to serve". |
 | `/manifest` | Descriptor envelope — surfaces, sinks, version. |
+| `/metrics` | Prometheus exposition, including the `parsec_*` collectors. See [observability](observability.md). |
 
-Centrifuge's own metrics are exposed under
-`broker.Node().Metrics(...)`; mount them on your own `/metrics`
-handler if you want Prometheus.
+Dependency failures surface at boot instead: an unreachable or
+misconfigured Redis fails `parsec serve` outright rather than leaving a
+process that answers `/healthz` while nothing works.
 
 ## Upgrades
 

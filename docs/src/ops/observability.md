@@ -39,13 +39,63 @@ share a registry with the rest of your service, pass
 | `parsec_sink_duration_seconds` | histogram | `sink` | every sink `Send` |
 | `parsec_dlq_size` | gauge | `sink` | periodic scrape (sweep interval) |
 | `parsec_key_rotations_total` | counter | `action` | `GenerateKey` / `PromoteKey` / `RetireKey` |
+| `parsec_keyring_backend` | gauge | `backend` | boot; `1` for the active backend, `0` for the others |
+| `parsec_keyring_version` | gauge | — | the shared store's revision counter; `-1` for backends without one |
+| `parsec_keyring_active_key_age_seconds` | gauge | — | refreshed on the keyring poll interval |
+| `parsec_keyring_watch_up` | gauge | — | `1` while the keyring watcher runs, `0` between restarts |
+| `parsec_keyring_reconcile_errors_total` | counter | — | failed reconcile reads and dropped watch subscriptions |
 | `parsec_rpc_requests_total` | counter | `method`, `status` | HTTP middleware (last URL segment) |
 | `parsec_rpc_duration_seconds` | histogram | `method` | HTTP middleware |
 
 `result` values are `success` or `failure`. `channel_visibility` is
 `public` or `private` (or `unknown` for the rare race where a name has
 not been parsed). `action` for `key_rotations_total` is one of
-`generated`, `promoted`, `retired`.
+`generated`, `promoted`, `retired`. `backend` for `keyring_backend` is one
+of `file`, `redis`, `ephemeral`, `external`.
+
+### Keyring health
+
+The keyring gauges answer three questions a multi-node deployment cannot
+otherwise see.
+
+**Do the nodes agree?** `parsec_keyring_version` is the shared store's
+revision. Every node should report the same number; one stuck lower has
+not picked up a rotation.
+
+```yaml
+- alert: ParsecKeyringDiverged
+  expr: max(parsec_keyring_version) - min(parsec_keyring_version) > 0
+  for: 2m
+  annotations:
+    summary: Parsec nodes disagree about the keyring revision
+```
+
+**Can each node still see rotations?** A node with
+`parsec_keyring_watch_up == 0` for more than a moment is not receiving
+them, and `parsec_keyring_reconcile_errors_total` climbing means its reads
+are failing too.
+
+```yaml
+- alert: ParsecKeyringWatchDown
+  expr: parsec_keyring_watch_up == 0
+  for: 5m
+```
+
+**Is a rotation overdue?** `parsec_keyring_active_key_age_seconds` is the
+only thing that makes a key nobody rotated visible. Pick a threshold from
+your own policy — the runbook is in
+[key rotation](key-rotation.md).
+
+```yaml
+- alert: ParsecSigningKeyOverdue
+  expr: parsec_keyring_active_key_age_seconds > 60 * 60 * 24 * 90
+  annotations:
+    summary: Active parsec signing key is older than 90 days
+```
+
+`parsec_keyring_backend` is worth an alert of its own if you ever deploy
+with Redis configured: `parsec_keyring_backend{backend="ephemeral"} == 1`
+in production means tokens will not survive the next restart.
 
 ### Cardinality contract
 
@@ -57,6 +107,12 @@ The label set is bounded by:
 - `type` ∈ {`access`, `refresh`, `mgmt`, `unknown`}
 - `sink` — bounded by the registered sink registry (3 in the default build)
 - `state` ∈ {`open`, `closed`, `deleted`}
+- `action` ∈ {`generated`, `promoted`, `retired`}
+- `backend` ∈ {`file`, `redis`, `ephemeral`, `external`}
+
+Key ids are deliberately **not** labels. A `kid` label would grow without
+bound across rotations; `parsec_keyring_version` conveys the same
+per-node divergence signal at fixed cardinality.
 - `method` — the last URL segment of a `/twirp/parsec.ParsecService/`
   path; anything outside the prefix is collapsed to the literal
   `non_rpc`

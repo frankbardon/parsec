@@ -99,3 +99,21 @@ func TestServe_ConfigEnvOverridesFile(t *testing.T) {
 
 // ensure the package compiles against the CLI; not a behavioral test.
 var _ = context.Background
+
+// redis.addr had no matching flag, unlike every other config field, so a
+// deployment could only reach redis through a config file.
+func TestServeCommand_RedisFlagsPresent(t *testing.T) {
+	cmd := ServeCommand()
+	want := map[string]bool{"redis-addr": false, "redis-key-prefix": false}
+	for _, f := range cmd.Flags {
+		name := f.Names()[0]
+		if _, ok := want[name]; ok {
+			want[name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("serve has no --%s flag", name)
+		}
+	}
+}

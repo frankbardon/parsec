@@ -170,10 +170,37 @@ type OIDCGrantSection struct {
 
 // RedisSection holds the cross-node Redis configuration. Empty Addr
 // means "single-node in-memory mode".
+//
+// Credentials can ride in Addr as a URL (redis://user:pass@host:port/db)
+// or be given as separate fields, which is what a secret mounted at a path
+// wants. Separate fields win over the URL.
 type RedisSection struct {
 	Addr      string `yaml:"addr"`
 	KeyPrefix string `yaml:"key_prefix"`
 	NodeID    string `yaml:"node_id"`
+
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	// DB selects the logical database. Nil leaves whatever Addr encoded,
+	// so an omitted field is not the same as an explicit 0.
+	DB  *int            `yaml:"db"`
+	TLS RedisTLSSection `yaml:"tls"`
+}
+
+// RedisTLSSection configures TLS for the Redis connection. A rediss://
+// address already implies TLS with system roots; this section is for a
+// private CA, or for forcing TLS on an address that does not say so.
+type RedisTLSSection struct {
+	Enabled bool `yaml:"enabled"`
+	// CAFile is a PEM bundle of roots used to verify the server.
+	CAFile string `yaml:"ca_file"`
+	// ServerName overrides the name checked against the certificate, for
+	// when the dial address is an IP or a tunnel.
+	ServerName string `yaml:"server_name"`
+	// InsecureSkipVerify disables verification entirely. Debugging only —
+	// it makes the connection carrying your signing keys trivially
+	// interceptable.
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify"`
 }
 
 // ManagerSection holds channel manager tunables.

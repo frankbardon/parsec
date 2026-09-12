@@ -55,11 +55,39 @@ the `parsec.Options` surface; every CLI flag has a matching file field.
 | `rate_limits.*` | Publish / subscribe / token-issue buckets |
 | `observability` | Metrics, tracing, access-log trusted proxies |
 
+### `redis`
+
+Setting `redis.addr` switches the channel registry, keyring, DLQ, rate
+limiter and broker to their Redis-backed implementations. **It also makes
+Redis the sole home of the signing keys** — `auth.state_dir` is ignored for
+key storage, so read
+[Redis durability](deployment.md#redis-durability) before deploying.
+
+| Field | Default | Notes |
+|---|---|---|
+| `addr` | "" | `host:port`, or a `redis://`, `rediss://`, `tcp://` or `unix://` URL. May carry `user:pass@` and `/db`. Sentinel and cluster URLs are rejected — pass `Options.RedisClient` instead. Empty means single-node in-memory. |
+| `key_prefix` | `parsec` | Namespace for every parsec key. Override when deployments share an instance. |
+| `node_id` | auto | Identifier used to dedupe this node's own pub/sub echoes. |
+| `username` | "" | Overrides any user in `addr`. |
+| `password` | "" | Overrides any password in `addr`. Pair with `${VAR}` interpolation to keep it out of the file. |
+| `db` | unset | Logical database. Omitted leaves whatever `addr` encoded; an explicit `0` forces database 0. |
+| `tls.enabled` | `false` | Forces TLS on an address that does not imply it. `rediss://` already does. |
+| `tls.ca_file` | "" | PEM bundle of roots for a private CA. |
+| `tls.server_name` | "" | Name checked against the certificate, when the dial address is an IP or tunnel. |
+| `tls.insecure_skip_verify` | `false` | Disables verification. Debugging only — the connection carries your signing keys. |
+
+The equivalent CLI flags are `--redis-addr` and `--redis-key-prefix`
+(`PARSEC_REDIS_ADDR`, `PARSEC_REDIS_KEY_PREFIX`). Credentials and TLS are
+file-only, since they do not belong in a process listing.
+
 ## Mutual exclusions
 
 The loader rejects impossible combinations at startup:
 
 - A `rate_limits.<bucket>` with `rate > 0` must also set `per`
+- A `redis.addr` that is neither `host:port` nor a supported URL
+- `redis.username` / `redis.password` / `redis.tls.enabled` without a
+  `redis.addr` — the credentials would be silently unused
 
 Caught at boot, not at first request.
 

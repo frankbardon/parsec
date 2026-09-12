@@ -3,6 +3,7 @@ package parsec
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -283,4 +284,82 @@ func redisClientFor(t *testing.T, mr *miniredis.Miniredis) *redis.Client {
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = c.Close() })
 	return c
+}
+
+// The keyring gauges are what make a stale node or an overdue key
+// visible; nothing else in the metric surface reports either.
+func TestKeyringMetricsExposed(t *testing.T) {
+	mr := miniredis.RunT(t)
+	p, err := New(Options{RedisAddr: mr.Addr(), Logger: bufLogger(&bytes.Buffer{})})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	got := gatherKeyringMetrics(t, p)
+	if v, ok := got[`parsec_keyring_backend{backend="redis"}`]; !ok || v != 1 {
+		t.Errorf("backend gauge for redis = %v (present=%v), want 1", v, ok)
+	}
+	if v, ok := got[`parsec_keyring_backend{backend="file"}`]; !ok || v != 0 {
+		t.Errorf("backend gauge for file = %v (present=%v), want 0", v, ok)
+	}
+	if v, ok := got["parsec_keyring_version"]; !ok || v != 1 {
+		t.Errorf("version gauge = %v (present=%v), want 1", v, ok)
+	}
+	if v, ok := got["parsec_keyring_active_key_age_seconds"]; !ok || v < 0 {
+		t.Errorf("active key age = %v (present=%v), want >= 0", v, ok)
+	}
+
+	// A rotation must move the version, which is how divergence between
+	// nodes becomes visible.
+	if _, err := p.GenerateKey(); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+	if v := gatherKeyringMetrics(t, p)["parsec_keyring_version"]; v != 2 {
+		t.Errorf("version gauge after rotation = %v, want 2", v)
+	}
+}
+
+// A file-backed ring has no shared revision, so the version gauge must
+// report -1 rather than a number that looks comparable across nodes.
+func TestKeyringVersionUnsetForFileBackend(t *testing.T) {
+	p, err := New(Options{StateDir: t.TempDir(), Logger: bufLogger(&bytes.Buffer{})})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got := gatherKeyringMetrics(t, p)
+	if v, ok := got[`parsec_keyring_backend{backend="file"}`]; !ok || v != 1 {
+		t.Errorf("backend gauge for file = %v (present=%v), want 1", v, ok)
+	}
+	if v, ok := got["parsec_keyring_version"]; !ok || v != -1 {
+		t.Errorf("version gauge = %v (present=%v), want -1", v, ok)
+	}
+}
+
+// gatherKeyringMetrics collects the parsec_keyring_* samples, keyed by
+// name plus label pairs.
+func gatherKeyringMetrics(t *testing.T, p *Parsec) map[string]float64 {
+	t.Helper()
+	families, err := p.Metrics().Registry.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	out := map[string]float64{}
+	for _, f := range families {
+		if !strings.HasPrefix(f.GetName(), "parsec_keyring_") {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			key := f.GetName()
+			for _, l := range m.GetLabel() {
+				key += fmt.Sprintf("{%s=%q}", l.GetName(), l.GetValue())
+			}
+			switch {
+			case m.GetGauge() != nil:
+				out[key] = m.GetGauge().GetValue()
+			case m.GetCounter() != nil:
+				out[key] = m.GetCounter().GetValue()
+			}
+		}
+	}
+	return out
 }

@@ -59,6 +59,14 @@ container so the broker, channel registry, keyring, DLQ, and rate
 limiter all run against Redis — the same multi-node code paths
 production uses.
 
+Because Redis holds the keyring in that stack, the compose file runs Redis
+with `--appendonly yes --maxmemory-policy noeviction` and a `redis-data`
+volume. Those are requirements, not tuning: an empty keyspace looks like a
+first boot, so Parsec would mint a fresh ring and invalidate every token
+it had issued. The config deliberately sets no `state_dir` — Redis wins
+the keyring precedence, so `keyring.json` would never be written. See
+[Redis durability](../ops/deployment.md#redis-durability).
+
 ```bash
 git clone https://github.com/frankbardon/parsec.git
 cd parsec
@@ -119,7 +127,8 @@ namespace.
   `docker exec -it ... sh` will fail. Use a sidecar for debugging.
 - **Ports**: `8000/tcp` (HTTP / WebSocket / Twirp). WebTransport (HTTP/3)
   uses UDP on a separate listener; expose it as needed.
-- **Volumes**: `/var/lib/parsec` (keyring + any future state).
+- **Volumes**: `/var/lib/parsec` (keyring + any future state; unused when
+  Redis is configured, since Redis holds the keyring).
 - **Labels**: Standard OCI labels point at the source repo + license.
 
 ## Security notes
@@ -127,10 +136,12 @@ namespace.
 - Always set `PARSEC_METRICS_TOKEN` (env or YAML) when `/metrics` is
   reachable from outside the cluster. The default is unguarded so dev
   evaluation works out of the box.
-- Always set `--state-dir` on a persistent volume in production. An
-  ephemeral keyring means every container restart issues a new
-  bootstrap mgmt token and invalidates every outstanding access /
-  refresh token.
+- Persist the keyring, or every container restart issues a new bootstrap
+  mgmt token and invalidates every outstanding access / refresh token.
+  Single-node: `--state-dir` on a persistent volume. With Redis
+  configured: Redis holds the ring instead and `--state-dir` is ignored
+  for keys, so Redis needs AOF and a volume — see
+  [Redis durability](../ops/deployment.md#redis-durability).
 - The image is rebuilt on every tagged release. Pin the digest in
   production (`ghcr.io/frankbardon/parsec@sha256:...`) so an unrelated
   retag does not change what you deploy.

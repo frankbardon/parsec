@@ -44,9 +44,30 @@ material. See
 
 ## Persistence
 
+Precedence is **explicit `KeyRing` > Redis > `StateDir` > ephemeral**,
+resolved in `buildKeyRing`. `normalizeRedisOptions` must therefore run
+BEFORE `buildKeyRing` in `parsec.New` — it is what turns `RedisAddr` into
+`RedisClient`, and reversing the two silently downgrades every
+address-configured deployment to a file-backed ring.
+
 `parsec.Options.StateDir` makes the ring file-backed at
 `<StateDir>/keyring.json` (mode `0600`, parent `0700`). Without
 StateDir the ring is ephemeral and tokens do not survive a restart.
+
+When Redis is configured it wins, `keyring.json` is neither read nor
+written, and Redis holds the only copy of the signing keys — `parsec.New`
+warns when both are set. `auth.RedisKeyRingStore` keys are
+`<prefix>:keyring`, `<prefix>:keyring:version`,
+`<prefix>:keyring:events`. `Save` is a compare-and-set against the version
+the store last loaded, returning `auth.ErrKeyRingConflict` rather than
+overwriting a concurrent rotation; `Parsec.mutateKeys` reloads and
+re-applies. Keep that sentinel out of `errors/codes.go`: it never crosses
+an RPC boundary, and a coded error would drag in the whole Twirp + JS
+client cascade for nothing.
+
+Redis addresses go through `internal/redisutil` — never hand a raw address
+to `redis.Options{Addr:}`, which takes only `host:port` and will dial a
+host named `redis://...` without complaint.
 
 ## Rotation
 
@@ -58,8 +79,22 @@ the full procedure including break-glass.
 
 ## Reload
 
-SIGHUP, `parsec keys reload`, or the mtime-poll watcher (5s default,
-configurable via `--keyring-poll`).
+SIGHUP, `parsec keys reload`, or the watcher (5s default, configurable via
+`--keyring-poll`). The interval means the same thing for both stores: the
+file store polls mtime, the Redis store re-reads the ring as a backstop for
+a pub/sub event it never received, since Redis pub/sub is at-most-once.
+
+`RedisKeyRingStore.Watch` supervises its own subscription and never returns
+except on context cancellation; `Parsec.runKeyringWatch` supervises the
+goroutine on top of that. Neither may be allowed to exit quietly — a node
+that stops watching serves keys that can never be updated again, and the
+only symptom is a single log line.
+
+Keyring health is observable via `parsec_keyring_backend`,
+`parsec_keyring_version` (equal across nodes when they agree),
+`parsec_keyring_active_key_age_seconds`, `parsec_keyring_watch_up` and
+`parsec_keyring_reconcile_errors_total`. Key ids are never labels —
+unbounded cardinality; the version gauge carries the divergence signal.
 
 ## Refresh-token rotation
 

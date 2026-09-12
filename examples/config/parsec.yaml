@@ -17,18 +17,38 @@ auth:
   mgmt_subject: operator
   # Lifetime of the bootstrap mgmt token.
   mgmt_ttl: 24h
-  # Interval between keyring file mtime checks. 0 disables polling.
+  # How stale this node's view of the keyring may get: the keyring file
+  # mtime check interval, or with redis the interval between reconcile
+  # reads that catch a missed rotation event. Negative disables it.
   keyring_poll: 5s
 
 redis:
   # Enable multi-node coherence by pointing at a shared Redis. Empty means
-  # single-node in-memory mode. Accepts the same address forms as
-  # centrifuge.RedisShardConfig.Address (host:port, redis://..., redis+sentinel://...).
+  # single-node in-memory mode. Accepts host:port or a redis://, rediss://,
+  # tcp:// or unix:// URL. Sentinel and cluster URLs are not supported here
+  # — build the client yourself and pass Options.RedisClient.
+  #
+  # NOTE: when this is set, redis holds the keyring and auth.state_dir is
+  # ignored. Redis then needs AOF on and eviction off, or losing the
+  # keyring key invalidates every issued token. See
+  # docs/src/ops/deployment.md#redis-durability.
   # addr: redis://localhost:6379
   # Key prefix in Redis. Override when multiple deployments share an instance.
   key_prefix: parsec
   # Identifier this node uses to dedupe its own pub/sub echoes. Empty = auto.
   node_id: ""
+  # Credentials. These win over anything embedded in addr, so a secret can
+  # come from the environment instead of the URL.
+  # username: parsec
+  # password: ${REDIS_PASSWORD}
+  # db: 0
+  # TLS. A rediss:// address already implies TLS with system roots; this
+  # section is for a private CA or for forcing TLS on a plain address.
+  # tls:
+  #   enabled: true
+  #   ca_file: /etc/parsec/redis-ca.pem
+  #   server_name: redis.internal
+  #   insecure_skip_verify: false
 
 manager:
   # How often the channel manager scans for expired channels.

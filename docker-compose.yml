@@ -9,13 +9,29 @@
 # The bootstrap mgmt token is printed to parsec's stderr on first boot;
 # tail the logs with `docker compose logs parsec` to capture it.
 #
-# Persistent keyring lives in the named volume `parsec-state`. Drop the
-# volume to reset auth state: `docker compose down -v`.
+# The keyring lives in Redis, which wins the keyring precedence whenever
+# it is configured, so Redis durability is what keeps the signing keys:
+# AOF is enabled below and eviction is off, because losing the keyring key
+# invalidates every token ever issued. The named volume `redis-data` holds
+# it. Drop it to reset auth state: `docker compose down -v`.
 
 services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # appendonly: the keyring is the only copy of the signing keys, and an
+    # empty keyspace looks like a first boot — parsec would mint a fresh
+    # ring and invalidate every issued token.
+    # noeviction: the keyring key carries no TTL, but an allkeys-* policy
+    # evicts it anyway once maxmemory is reached.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -44,7 +60,6 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - parsec-state:/var/lib/parsec
       - ./examples/config/parsec.docker.yaml:/etc/parsec/parsec.yaml:ro
     healthcheck:
       test: ["CMD", "/usr/local/bin/parsec", "--version"]
@@ -53,4 +68,4 @@ services:
       retries: 5
 
 volumes:
-  parsec-state:
+  redis-data:

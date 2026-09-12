@@ -590,6 +590,16 @@ func New(opts Options) (*Parsec, error) {
 	if p.opts.JWKSHandler == nil && ringHasAsymmetric(p.ring) {
 		p.opts.JWKSHandler = auth.JWKSHandler(p.ring)
 	}
+	// Count reconcile failures and dropped subscriptions. Installed here
+	// rather than in buildKeyRing because the metrics bundle does not exist
+	// that early; safe because no watch is running until Run.
+	if rs, ok := keyringStore.(*auth.RedisKeyRingStore); ok {
+		rs.WithErrorHook(func(err error) {
+			m.KeyringReconcileErrors.Inc()
+			logger.Warn("parsec: keyring watch error", "err", err)
+		})
+	}
+	p.observeKeyring()
 	return p, nil
 }
 
@@ -1455,10 +1465,81 @@ func (p *Parsec) Run(ctx context.Context) error {
 	if p.keyringStore != nil {
 		go p.runKeyringWatch(ctx)
 	}
+	go p.runKeyringObserver(ctx)
 	if p.dlq != nil && p.metrics != nil {
 		go p.runDLQScrape(ctx)
 	}
 	return p.broker.Run(ctx)
+}
+
+// keyringBackendLabel names the store persisting this node's ring, for the
+// parsec_keyring_backend gauge.
+func (p *Parsec) keyringBackendLabel() string {
+	switch p.keyringStore.(type) {
+	case *auth.RedisKeyRingStore:
+		return metrics.KeyringBackendRedis
+	case *auth.FileKeyRingStore:
+		return metrics.KeyringBackendFile
+	case nil:
+		if p.opts.KeyRing != nil {
+			return metrics.KeyringBackendExternal
+		}
+		return metrics.KeyringBackendEphemeral
+	default:
+		return metrics.KeyringBackendExternal
+	}
+}
+
+// observeKeyring refreshes the keyring gauges. Called at boot, after every
+// reload or rotation, and on a ticker so the active key's age does not go
+// stale between rotations.
+func (p *Parsec) observeKeyring() {
+	if p.metrics == nil {
+		return
+	}
+	backend := p.keyringBackendLabel()
+	for _, b := range []string{
+		metrics.KeyringBackendFile, metrics.KeyringBackendRedis,
+		metrics.KeyringBackendEphemeral, metrics.KeyringBackendExternal,
+	} {
+		v := 0.0
+		if b == backend {
+			v = 1
+		}
+		p.metrics.KeyringBackend.WithLabelValues(b).Set(v)
+	}
+
+	// Only a shared store carries a revision. File and ephemeral rings
+	// report -1 rather than a number that would look comparable.
+	version := float64(-1)
+	if rs, ok := p.keyringStore.(*auth.RedisKeyRingStore); ok {
+		version = float64(rs.Version())
+	}
+	p.metrics.KeyringVersion.Set(version)
+
+	if active, err := p.ring.Active(); err == nil {
+		p.metrics.KeyringActiveKeyAge.Set(time.Since(active.CreatedAt).Seconds())
+	}
+}
+
+// runKeyringObserver refreshes the keyring gauges periodically. The active
+// key's age advances on its own, so a rotation that never happens has to
+// become visible without any event to hang the update on.
+func (p *Parsec) runKeyringObserver(ctx context.Context) {
+	interval := p.opts.KeyringPollInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			p.observeKeyring()
+		}
+	}
 }
 
 // runKeyringWatch keeps the ring in step with the backing store for the
@@ -1478,15 +1559,19 @@ func (p *Parsec) runKeyringWatch(ctx context.Context) {
 	backoff := minBackoff
 	for ctx.Err() == nil {
 		started := time.Now()
+		p.setKeyringWatchUp(1)
 		err := p.keyringStore.Watch(ctx, func(fresh *auth.KeyRing) {
 			p.keyMu.Lock()
-			defer p.keyMu.Unlock()
 			if err := p.ring.LoadSnapshot(fresh.Snapshot()); err != nil {
+				p.keyMu.Unlock()
 				p.logger.Warn("parsec: keyring reload error", "err", err)
 				return
 			}
+			p.keyMu.Unlock()
 			p.logger.Info("parsec: keyring reloaded", "active_key_id", fresh.ActiveID())
+			p.observeKeyring()
 		})
+		p.setKeyringWatchUp(0)
 		if ctx.Err() != nil {
 			return
 		}
@@ -1623,6 +1708,7 @@ func (p *Parsec) mutateKeys(apply func(*auth.KeyRing) error) error {
 		}
 		err := p.persistKeyRing()
 		if err == nil {
+			p.observeKeyring()
 			return nil
 		}
 		if !errors.Is(err, auth.ErrKeyRingConflict) {
@@ -1932,4 +2018,12 @@ type RedisAuth struct {
 	// TLSConfig forces TLS with this config — needed for a private CA. A
 	// rediss:// address already gets a default config without it.
 	TLSConfig *tls.Config
+}
+
+// setKeyringWatchUp records whether the keyring watcher is running. A node
+// sitting at 0 cannot observe rotations performed on other nodes.
+func (p *Parsec) setKeyringWatchUp(v float64) {
+	if p.metrics != nil {
+		p.metrics.KeyringWatchUp.Set(v)
+	}
 }

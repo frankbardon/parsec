@@ -37,6 +37,11 @@ const (
 	KeyActionPromoted  = "promoted"
 	KeyActionRetired   = "retired"
 
+	KeyringBackendFile      = "file"
+	KeyringBackendRedis     = "redis"
+	KeyringBackendEphemeral = "ephemeral"
+	KeyringBackendExternal  = "external"
+
 	RPCNonRPC = "non_rpc"
 )
 
@@ -57,6 +62,11 @@ type Metrics struct {
 	SinkDuration           *prometheus.HistogramVec
 	DLQSize                *prometheus.GaugeVec
 	KeyRotationsTotal      *prometheus.CounterVec
+	KeyringBackend         *prometheus.GaugeVec
+	KeyringVersion         prometheus.Gauge
+	KeyringActiveKeyAge    prometheus.Gauge
+	KeyringWatchUp         prometheus.Gauge
+	KeyringReconcileErrors prometheus.Counter
 	RPCRequestsTotal       *prometheus.CounterVec
 	RPCDuration            *prometheus.HistogramVec
 	RateLimitDecisions     *prometheus.CounterVec
@@ -145,6 +155,28 @@ func NewWithRegistryAndRegion(reg *prometheus.Registry, region string) *Metrics 
 			Name: "parsec_key_rotations_total",
 			Help: "Key-ring mutations by action (generated, promoted, retired).",
 		}, []string{"action"}),
+		KeyringBackend: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "parsec_keyring_backend",
+			Help: "1 for the backend persisting this node's keyring (file/redis/ephemeral/external), 0 otherwise.",
+		}, []string{"backend"}),
+		KeyringVersion: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "parsec_keyring_version",
+			Help: "Revision of the keyring this node is serving, from the shared store's version counter. " +
+				"-1 when the backend has no version (file, ephemeral). Nodes that disagree report different values.",
+		}),
+		KeyringActiveKeyAge: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "parsec_keyring_active_key_age_seconds",
+			Help: "Age of the active signing key. Alert on this to catch a rotation that never happened.",
+		}),
+		KeyringWatchUp: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "parsec_keyring_watch_up",
+			Help: "1 while the keyring watcher is running, 0 when it is between restarts. " +
+				"A node with this at 0 cannot see rotations performed elsewhere.",
+		}),
+		KeyringReconcileErrors: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "parsec_keyring_reconcile_errors_total",
+			Help: "Failed keyring reconcile reads and dropped watch subscriptions.",
+		}),
 		RPCRequestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "parsec_rpc_requests_total",
 			Help: "RPC requests by method (last URL segment) and HTTP status.",
@@ -174,7 +206,9 @@ func NewWithRegistryAndRegion(reg *prometheus.Registry, region string) *Metrics 
 	for _, c := range []prometheus.Collector{
 		m.PublishesTotal, m.PublishDuration, m.SubscribersActive, m.ChannelsActive,
 		m.TokenVerificationTotal, m.SinkAttemptsTotal, m.SinkDuration, m.DLQSize,
-		m.KeyRotationsTotal, m.RPCRequestsTotal, m.RPCDuration,
+		m.KeyRotationsTotal, m.KeyringBackend, m.KeyringVersion,
+		m.KeyringActiveKeyAge, m.KeyringWatchUp, m.KeyringReconcileErrors,
+		m.RPCRequestsTotal, m.RPCDuration,
 		m.RateLimitDecisions, m.RefreshRotations,
 		m.CacheOperations, m.CacheSize,
 	} {

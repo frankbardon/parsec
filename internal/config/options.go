@@ -1,8 +1,11 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -47,6 +50,7 @@ type Resolved struct {
 	RedisAddr      string
 	RedisKeyPrefix string
 	NodeID         string
+	RedisAuth      parsec.RedisAuth
 
 	// Manager
 	SweepInterval time.Duration
@@ -77,6 +81,10 @@ type Resolved struct {
 // Resolve converts a validated Config into a Resolved snapshot.
 // Mutually-exclusive checks have already happened during Validate.
 func (c *Config) Resolve() (*Resolved, error) {
+	redisAuth, err := c.resolveRedisAuth()
+	if err != nil {
+		return nil, err
+	}
 	r := &Resolved{
 		Addr:   c.Server.Addr,
 		NoAuth: c.Server.NoAuth,
@@ -92,6 +100,7 @@ func (c *Config) Resolve() (*Resolved, error) {
 		RedisAddr:          c.Redis.Addr,
 		RedisKeyPrefix:     c.Redis.KeyPrefix,
 		NodeID:             c.Redis.NodeID,
+		RedisAuth:          redisAuth,
 		MetricsBearerToken: c.Observability.MetricsBearerToken,
 		OTLPEndpoint:       c.Observability.OTLPEndpoint,
 		Region:             c.Region,
@@ -105,7 +114,6 @@ func (c *Config) Resolve() (*Resolved, error) {
 		}
 		r.StateDir = abs
 	}
-	var err error
 	if r.MgmtTTL, err = mustDur("auth.mgmt_ttl", c.Auth.MgmtTTL); err != nil {
 		return nil, err
 	}
@@ -189,6 +197,9 @@ func (r *Resolved) ApplyTo(o *parsec.Options) {
 	}
 	if r.NodeID != "" {
 		o.NodeID = r.NodeID
+	}
+	if r.RedisAuth != (parsec.RedisAuth{}) {
+		o.RedisAuth = r.RedisAuth
 	}
 	if r.SweepInterval > 0 {
 		o.SweepInterval = r.SweepInterval
@@ -352,4 +363,38 @@ func resolveOIDC(s OIDCSection) (*auth.OIDCConfig, error) {
 		ScopesClaim:  s.ScopesClaim,
 		Grants:       grants,
 	}, nil
+}
+
+// resolveRedisAuth builds the credential/TLS overrides for the Redis
+// client from the redis section, reading the CA bundle from disk if one is
+// named. Returns the zero value when nothing is configured, so ApplyTo can
+// tell "unset" from "set to empty".
+func (c *Config) resolveRedisAuth() (parsec.RedisAuth, error) {
+	var a parsec.RedisAuth
+	a.Username = c.Redis.Username
+	a.Password = c.Redis.Password
+	a.DB = c.Redis.DB
+
+	t := c.Redis.TLS
+	if !t.Enabled && t.CAFile == "" && t.ServerName == "" && !t.InsecureSkipVerify {
+		return a, nil
+	}
+	cfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         t.ServerName,
+		InsecureSkipVerify: t.InsecureSkipVerify, //nolint:gosec // operator opt-in, documented as debugging only
+	}
+	if t.CAFile != "" {
+		pem, err := os.ReadFile(t.CAFile)
+		if err != nil {
+			return parsec.RedisAuth{}, fmt.Errorf("redis.tls.ca_file: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return parsec.RedisAuth{}, fmt.Errorf("redis.tls.ca_file %q: no certificates found", t.CAFile)
+		}
+		cfg.RootCAs = pool
+	}
+	a.TLSConfig = cfg
+	return a, nil
 }

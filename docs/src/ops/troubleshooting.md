@@ -138,6 +138,62 @@ useful part — read the server log or the response body.
 Unhandled, unexpected error path. File a bug with the surrounding log
 context. These should be rare; treat them as actionable.
 
+## Redis and keyring symptoms
+
+These are configuration failures rather than coded errors, so they show up
+in the log or as behavior rather than as a `PARSEC_*` response.
+
+### `redis address ... is neither host:port nor a redis URL`
+
+The address is malformed. Supported forms are `host:port` and `redis://`,
+`rediss://`, `tcp://` or `unix://` URLs. `parsec serve` fails at startup
+rather than dialing a host that does not exist.
+
+### `redis address ... uses redis+sentinel, which the parsec redis client cannot build`
+
+Sentinel and cluster topologies need a client parsec cannot construct from
+an address alone. Build one yourself and pass `Options.RedisClient`; the
+CLI cannot express this.
+
+### `redis unreachable at <addr>`
+
+Redis did not answer a ping within `RedisPingTimeout` (5s default). Boot
+fails deliberately — the alternative is a process that answers `/healthz`
+while every operation fails. Check the address, credentials, and any
+network policy between the two.
+
+### Tokens minted on one node are rejected by another
+
+The nodes are not sharing a keyring. Check
+`parsec_keyring_backend{backend="redis"}` is `1` on every node: a node
+reporting `file` or `ephemeral` bootstrapped its own keys. Then compare
+`parsec_keyring_version` across nodes — equal numbers mean they agree.
+
+### A rotation on one node never reaches another
+
+Look at `parsec_keyring_watch_up` on the lagging node. At `0` it is between
+watcher restarts and cannot receive events; `parsec_keyring_reconcile_errors_total`
+climbing alongside means its reads are failing too, which points at Redis
+connectivity rather than at parsec. A single missed event is not permanent:
+each node re-reads the ring every `--keyring-poll`.
+
+### Every token suddenly fails after a Redis restart
+
+Redis lost the keyring and parsec bootstrapped a fresh one — an empty
+keyspace is indistinguishable from a first boot. The log line is
+`bootstrapped a new keyring in redis` where you expected `loaded keyring
+from redis`. Fix the persistence settings
+([Redis durability](deployment.md#redis-durability)) and restore from a
+`parsec keys export` backup if you have one. Without a backup, every
+client has to re-authenticate.
+
+### `parsec: StateDir is set but redis holds the keyring`
+
+Not an error — a warning that `keyring.json` is neither read nor written
+because Redis wins the keyring precedence. Drop `state_dir` from the config
+to make the deployment say what it means, and make sure Redis is actually
+durable.
+
 ## Debug tips
 
 - Run `parsec channels list` to confirm what the server thinks exists.
@@ -148,6 +204,9 @@ context. These should be rare; treat them as actionable.
 - Watch the server log with the slog default handler on debug; key
   events (`keyring reload`, `bootstrap mgmt token`) are emitted as
   structured events.
+- Scrape `/metrics` and grep `parsec_keyring_` to see which backend a node
+  is using, which keyring revision it has, and whether its watcher is up.
+  See [keyring health](observability.md#keyring-health).
 
 ## See also
 

@@ -262,6 +262,18 @@ func WithRedis(client redis.UniversalClient) Option {
 	}
 }
 
+// WithRedisAddr configures Redis by address only, the way a `parsec serve`
+// deployment does, leaving parsec to build the client. Use this when the
+// behavior under test depends on the address path — WithRedis and
+// NewWithRedis supply a pre-built client, which resolves some options
+// differently.
+func WithRedisAddr(addr string) Option {
+	return func(c *config) {
+		c.pOpts.RedisAddr = addr
+		c.pOpts.RedisClient = nil
+	}
+}
+
 // WithOptions exposes the underlying parsec.Options for the corner
 // cases where a test needs a setting parsectest does not surface
 // directly. Returned closure receives a pointer to the options before

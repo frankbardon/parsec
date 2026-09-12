@@ -5,14 +5,25 @@ server:
   addr: ":8000"
 
 auth:
-  state_dir: /var/lib/parsec
+  # No state_dir: redis wins the keyring precedence, so keyring.json would
+  # never be read or written. Redis holds the signing keys — see the
+  # durability requirements in docs/src/ops/deployment.md.
   mgmt_subject: operator
   mgmt_ttl: 24h
+  # Also the interval between redis reconcile reads that catch a rotation
+  # event this node missed.
   keyring_poll: 5s
 
 redis:
   addr: redis://redis:6379
   key_prefix: parsec
+  # Credentials may ride in addr (redis://user:pass@host:port/db) or be set
+  # here; these win over the URL. Use rediss:// or tls.enabled for TLS.
+  # username: parsec
+  # password: ${REDIS_PASSWORD}
+  # tls:
+  #   enabled: true
+  #   ca_file: /etc/parsec/redis-ca.pem
 
 manager:
   sweep_interval: 30s
