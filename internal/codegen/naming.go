@@ -71,9 +71,10 @@ func patternPlaceholders(pattern string) []placeholder {
 // reconstructs a concrete channel name from the placeholder args.
 //
 // For "sessions:{id}.events" and args=[id], renderer yields
-//   "sessions:" + id + ".events"
+//
+//	"sessions:" + id + ".events"
 type patternToken struct {
-	Literal     string // non-empty for literal text (including ':' / '.')
+	Literal         string // non-empty for literal text (including ':' / '.')
 	PlaceholderName string // non-empty for a variable substitution
 }
 

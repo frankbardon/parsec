@@ -134,8 +134,8 @@ func TestPerChannel_MostSpecificRuleWins(t *testing.T) {
 	// Two overlapping rules; the more-literal pattern should beat the
 	// broader one.
 	svc := newPerChannelService(t, map[string]ratelimit.Limit{
-		"public:hot.**":            {Rate: 100, Per: time.Second},
-		"public:hot.metrics.feed":  {Rate: 1, Per: time.Second},
+		"public:hot.**":           {Rate: 100, Per: time.Second},
+		"public:hot.metrics.feed": {Rate: 1, Per: time.Second},
 	})
 
 	const hot = "public:hot.metrics.feed"

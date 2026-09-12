@@ -9,10 +9,10 @@ import (
 // literal segments with two kinds of wildcards:
 //
 //   - {name} — matches exactly one segment; the matched value is bound to
-//             the placeholder name.
+//     the placeholder name.
 //   - *     — matches exactly one segment, anonymous.
 //   - **    — matches one or more trailing segments greedily. Only valid
-//             as the final token. Anonymous.
+//     as the final token. Anonymous.
 //
 // Segments are split on the channel-name delimiter set: '.' AND ':'. This
 // lets a pattern address both Parsec's canonical wire form

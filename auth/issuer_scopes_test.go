@@ -86,4 +86,3 @@ func TestIssuer_IssueAccess(t *testing.T) {
 		t.Error("access token should carry publish verb")
 	}
 }
-

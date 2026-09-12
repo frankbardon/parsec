@@ -193,8 +193,8 @@ func (r *MemoryRegistry) Resolve(channel string) (ChannelPattern, map[string]str
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	type candidate struct {
-		p        ChannelPattern
-		bindings map[string]string
+		p           ChannelPattern
+		bindings    map[string]string
 		specificity int
 	}
 	var matches []candidate

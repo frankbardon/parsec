@@ -32,4 +32,3 @@ func WriteManifest(ctx context.Context, w io.Writer) error {
 	env := svc.Manifest(ctx)
 	return descriptor.WriteEnvelope(w, env)
 }
-

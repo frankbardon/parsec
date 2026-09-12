@@ -112,8 +112,8 @@ func TestCheckSubscribeLimit_KeysIsolatePerSubject(t *testing.T) {
 // over broader globs.
 func TestCheckSubscribeLimit_MostSpecificRuleWins(t *testing.T) {
 	p, stop := newSubscribePerChannelParsec(t, map[string]ratelimit.Limit{
-		"private:webapp.hot.**":         {Rate: 100, Per: time.Second},
-		"private:webapp.hot.42.feed":    {Rate: 1, Per: time.Second},
+		"private:webapp.hot.**":      {Rate: 100, Per: time.Second},
+		"private:webapp.hot.42.feed": {Rate: 1, Per: time.Second},
 	})
 	defer stop()
 

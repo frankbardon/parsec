@@ -2,10 +2,10 @@
 // Parsec. There are three token types, distinguished by the typ claim:
 //
 //   - access  — short-lived, used to connect over the websocket and to
-//               subscribe to listed private channels
+//     subscribe to listed private channels
 //   - refresh — exchanged at the RefreshToken RPC for a fresh access token
 //   - mgmt    — operator token presented as Authorization: Bearer on the
-//               management RPC surface
+//     management RPC surface
 //
 // The wire format is the standard JWT compact serialization
 // (base64url(header).base64url(claims).base64url(hmac)), but Parsec uses a

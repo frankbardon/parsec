@@ -132,7 +132,6 @@ func keyToJWK(k Key) (JWK, bool) {
 	}
 }
 
-
 // encodeRSAExponent renders an RSA public exponent in JWS-canonical
 // base64url form (RFC 7518 §6.3.1.2): big-endian, minimum-length
 // byte string. Almost always 65537 → "AQAB", but small primes are

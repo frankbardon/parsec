@@ -264,4 +264,3 @@ func (m *Manager) RunEventBus(ctx context.Context) error {
 	}
 	return m.bus.Run(ctx, m.emitLocal)
 }
-

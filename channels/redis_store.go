@@ -21,7 +21,8 @@ func formatNanos(t time.Time) string {
 // transitions run inside a Lua script for atomicity.
 //
 // Storage layout:
-//   parsec:channels        — HASH, field = channel name, value = JSON record
+//
+//	parsec:channels        — HASH, field = channel name, value = JSON record
 //
 // The store is safe for concurrent use across processes; Redis is the
 // single source of truth.

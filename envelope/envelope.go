@@ -8,7 +8,7 @@
 //
 //   - Channel       — the channel this envelope was published on
 //   - Sequence      — monotonic per (channel, producer) counter assigned by
-//                     the publishing client (NOT the server)
+//     the publishing client (NOT the server)
 //   - ProducedAt    — wall-clock production time (millisecond precision)
 //   - Producer      — identity + kind (user/agent/service) of the source
 //   - Aspect        — routing key within a channel; subscribers filter on it
@@ -134,13 +134,13 @@ func (e *Envelope) UnmarshalJSON(b []byte) error {
 
 // Sentinel errors. Callers errors.Is against these.
 var (
-	ErrChannelRequired    = errors.New("envelope: channel required")
-	ErrAspectRequired     = errors.New("envelope: aspect required")
-	ErrProducerRequired   = errors.New("envelope: producer required")
+	ErrChannelRequired     = errors.New("envelope: channel required")
+	ErrAspectRequired      = errors.New("envelope: aspect required")
+	ErrProducerRequired    = errors.New("envelope: producer required")
 	ErrProducerKindUnknown = errors.New("envelope: unknown producer kind")
 	ErrSequenceNonPositive = errors.New("envelope: sequence must be positive")
-	ErrProducedAtZero     = errors.New("envelope: produced_at must be set")
-	ErrTooLarge           = errors.New("envelope: encoded size exceeds MaxEnvelopeSize")
+	ErrProducedAtZero      = errors.New("envelope: produced_at must be set")
+	ErrTooLarge            = errors.New("envelope: encoded size exceeds MaxEnvelopeSize")
 )
 
 // Validate reports whether the envelope is structurally well-formed. It

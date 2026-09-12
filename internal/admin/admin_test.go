@@ -79,9 +79,9 @@ func TestHandler404OnUnknown(t *testing.T) {
 func TestHandlerContentTypes(t *testing.T) {
 	h := Handler()
 	cases := map[string]string{
-		"/admin/index.html":  "text/html",
-		"/admin/app.js":      "application/javascript",
-		"/admin/styles.css":  "text/css",
+		"/admin/index.html": "text/html",
+		"/admin/app.js":     "application/javascript",
+		"/admin/styles.css": "text/css",
 	}
 	for p, want := range cases {
 		req := httptest.NewRequest(http.MethodGet, p, nil)

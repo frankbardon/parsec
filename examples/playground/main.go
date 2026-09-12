@@ -344,4 +344,3 @@ func (*flakySink) Name() string { return "flakysink" }
 func (*flakySink) Send(_ context.Context, _ sinks.Recipient, _ sinks.Message) error {
 	return sinks.Transient(errors.New("simulated transient failure"))
 }
-

@@ -41,8 +41,8 @@ type UserID string
 
 // AuthDecision is the Authorizer's answer.
 type AuthDecision struct {
-	Granted []string         `json:"granted"`
-	Denied  []DeniedChannel  `json:"denied,omitempty"`
+	Granted []string        `json:"granted"`
+	Denied  []DeniedChannel `json:"denied,omitempty"`
 }
 
 // DeniedChannel pairs a rejected channel with a human-readable reason.
@@ -264,9 +264,9 @@ type IssueResponse struct {
 
 // DelegateRequest is the body of POST /parsec/token/delegate.
 type DelegateRequest struct {
-	OnBehalfOf      string        `json:"on_behalf_of"`
-	Channels        []string      `json:"channels"`
-	LifetimeSeconds int           `json:"lifetime_seconds,omitempty"`
+	OnBehalfOf      string   `json:"on_behalf_of"`
+	Channels        []string `json:"channels"`
+	LifetimeSeconds int      `json:"lifetime_seconds,omitempty"`
 }
 
 // RevokeRequest is the body of POST /parsec/revoke.
