@@ -201,6 +201,16 @@ with two `--to` targets.
   the subscriber, exit 0).
 - The daemon needs network access to **all** Redis instances. Place
   it accordingly in your VPC peering / firewall rules.
+- `--from` and `--to` take `host:port` or a full `redis://`, `rediss://`,
+  `tcp://` or `unix://` URL, and honor the credentials and database the URL
+  carries (`redis://user:pass@host:6379/2`). Cross-region links usually
+  need both, so prefer the URL form here.
+
+  `rediss://` now connects over TLS. It was previously accepted and then
+  silently downgraded to plaintext, so a link you believed was encrypted
+  was not — re-check any cross-region runbook that used it. Sentinel and
+  cluster URLs are rejected outright rather than mis-dialed; point the
+  daemon at a concrete instance.
 
 ## Push vs Pull — picking a pattern
 
