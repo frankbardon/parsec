@@ -36,6 +36,25 @@ The HMAC signing ring. If you provide one, `parsec.New` uses it as-is
 and ignores `StateDir`. Most embedders leave this nil and pass
 `StateDir` instead — fewer ways to get rotation wrong.
 
+## `KeyRingStore auth.KeyRingStore`
+
+A keyring backend `parsec.New` does not build itself — the [Google Secret
+Manager store](../ops/gcp-secret-manager.md), or your own implementation
+of the three-method `auth.KeyRingStore` interface. It outranks
+`RedisClient` and `StateDir`: an explicitly constructed store is a
+deliberate choice, and silently demoting it to `keyring.json` would
+scatter the signing keys across the fleet.
+
+`parsec.New` bootstraps through it, so a store shared across nodes must
+either implement `auth.KeyRingBootstrapper` or return
+`auth.ErrKeyRingConflict` from the losing `Save` — otherwise two nodes
+starting at once each mint a ring, and the loser signs tokens the rest of
+the fleet rejects. The contract is written out on the interface in
+`auth/keyringstore.go`.
+
+This option is library-only: it takes a constructed value, so the CLI has
+no way to spell it.
+
 ## `StateDir string`
 
 When set, makes the keyring file-backed at
@@ -48,6 +67,9 @@ not survive a restart.
 ## `KeyringPollInterval time.Duration`
 
 How stale this node's view of the keyring may get. Default 5 seconds.
+
+It does not reach a store you built yourself — `KeyRingStore` carries its
+own interval.
 
 With `StateDir` it is the mtime-poll interval, which makes out-of-band
 `keyring.json` edits visible to a running server. With Redis it is the
@@ -101,17 +123,20 @@ to `0` forces database 0. Unused when `RedisClient` is supplied directly.
 
 ## Keyring precedence
 
-The four options above interact with `KeyRing` and `StateDir` in one fixed
-order:
+The four options above interact with `KeyRing`, `KeyRingStore` and
+`StateDir` in one fixed order:
 
 | Precedence | Condition | Store |
 |---|---|---|
 | 1 | `KeyRing` non-nil | None — you own persistence |
-| 2 | Redis configured | `auth.RedisKeyRingStore`, shared across nodes |
-| 3 | `StateDir` set | `auth.FileKeyRingStore` at `<StateDir>/keyring.json` |
-| 4 | neither | Ephemeral; tokens die with the process |
+| 2 | `KeyRingStore` non-nil | Yours; [Secret Manager](../ops/gcp-secret-manager.md) is the one that ships |
+| 3 | Redis configured | `auth.RedisKeyRingStore`, shared across nodes |
+| 4 | `StateDir` set | `auth.FileKeyRingStore` at `<StateDir>/keyring.json` |
+| 5 | none of them | Ephemeral; tokens die with the process |
 
-Redis beating `StateDir` is the part that surprises people: with both set,
+Every level below the winner is ignored for key storage, and `parsec.New`
+warns whenever it sees two set. Redis beating `StateDir` is the part that
+surprises people: with both set,
 `keyring.json` is never read or written and Redis holds the only copy of
 the signing keys. `parsec.New` logs a warning when it sees both. Redis
 then needs AOF on and eviction off — see
@@ -174,7 +199,8 @@ attributes (`active_key_id`, `path`, etc.) suitable for JSON sinks.
 |---|---|
 | `FS` | `afero.NewOsFs()` |
 | `Sinks` | empty `sinks.Registry` |
-| `KeyRing` | bootstrapped from Redis if configured, else `StateDir`, else ephemeral |
+| `KeyRing` | bootstrapped from `KeyRingStore` if set, else Redis, else `StateDir`, else ephemeral |
+| `KeyRingStore` | nil — parsec picks a store from the options below |
 | `RedisClient` / `RedisAddr` | unset — single-node in-memory |
 | `RedisKeyPrefix` | `parsec` |
 | `RedisPingTimeout` | 5s |
@@ -193,3 +219,5 @@ attributes (`active_key_id`, `path`, etc.) suitable for JSON sinks.
 - [Custom sinks](sinks.md) — populate the registry.
 - [Key rotation](../ops/key-rotation.md) — what `StateDir` actually
   buys you.
+- [Keyring in Google Secret Manager](../ops/gcp-secret-manager.md) — the
+  `KeyRingStore` that ships.

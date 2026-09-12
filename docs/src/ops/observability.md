@@ -51,7 +51,12 @@ share a registry with the rest of your service, pass
 `public` or `private` (or `unknown` for the rare race where a name has
 not been parsed). `action` for `key_rotations_total` is one of
 `generated`, `promoted`, `retired`. `backend` for `keyring_backend` is one
-of `file`, `redis`, `ephemeral`, `external`.
+of `file`, `redis`, `ephemeral`, `external`. A store supplied through
+`Options.KeyRingStore` — the [Google Secret Manager
+store](gcp-secret-manager.md), or your own — reports `external`: the label
+set is fixed so that a custom store cannot grow the metric's cardinality.
+Its revision still shows up on `parsec_keyring_version`, which is the
+signal worth alerting on.
 
 ### Keyring health
 
@@ -59,8 +64,9 @@ The keyring gauges answer three questions a multi-node deployment cannot
 otherwise see.
 
 **Do the nodes agree?** `parsec_keyring_version` is the shared store's
-revision. Every node should report the same number; one stuck lower has
-not picked up a rotation.
+revision — the Redis version counter, or the Secret Manager version
+number. Every node should report the same number; one stuck lower has not
+picked up a rotation.
 
 ```yaml
 - alert: ParsecKeyringDiverged

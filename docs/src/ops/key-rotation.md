@@ -106,6 +106,14 @@ The file-backed keyring + NFS pattern still works for deployments without
 Redis; in that case disable the mtime poller on all but one node
 (`--keyring-poll 0`) and `SIGHUP` the others after each rotation.
 
+Deployments that would rather not trust Redis with key material can share
+the ring through [Google Secret
+Manager](gcp-secret-manager.md) instead. The rotation commands and the
+two signals above are unchanged; what differs is the propagation
+mechanism — Secret Manager has no change feed, so each node polls and the
+worst case for a rotation to land is one `ReconcileInterval` (default
+30s).
+
 ## What if I have to break glass?
 
 If a key has been compromised and you cannot wait for tokens to expire:

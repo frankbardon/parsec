@@ -44,11 +44,26 @@ material. See
 
 ## Persistence
 
-Precedence is **explicit `KeyRing` > Redis > `StateDir` > ephemeral**,
-resolved in `buildKeyRing`. `normalizeRedisOptions` must therefore run
-BEFORE `buildKeyRing` in `parsec.New` — it is what turns `RedisAddr` into
-`RedisClient`, and reversing the two silently downgrades every
-address-configured deployment to a file-backed ring.
+Precedence is **explicit `KeyRing` > `Options.KeyRingStore` > Redis >
+`StateDir` > ephemeral**, resolved in `buildKeyRing`.
+`normalizeRedisOptions` must therefore run BEFORE `buildKeyRing` in
+`parsec.New` — it is what turns `RedisAddr` into `RedisClient`, and
+reversing the two silently downgrades every address-configured deployment
+to a file-backed ring.
+
+`Options.KeyRingStore` takes a store parsec does not build itself and
+bootstraps it through `auth.EnsureKeyRingStore`, which defers to the
+store's own `Ensure` (`auth.KeyRingBootstrapper`) when it has one. parsec
+reaches the rest of a custom store through interfaces, never a type
+switch: `auth.KeyRingVersioner` feeds `parsec_keyring_version`,
+`auth.KeyRingErrorReporter` feeds `parsec_keyring_reconcile_errors_total`.
+A custom store reports `backend="external"` on `parsec_keyring_backend` —
+the label set is fixed so a store cannot grow the metric's cardinality.
+
+Stores outside this module encode through `auth.EncodeKeyRing` /
+`auth.DecodeKeyRing`. Marshalling `Snapshot` by hand writes
+`format_version ""`, which every loader then reads as a legacy v1 ring and
+drops the per-key `Alg` that v2 added.
 
 `parsec.Options.StateDir` makes the ring file-backed at
 `<StateDir>/keyring.json` (mode `0600`, parent `0700`). Without
@@ -69,6 +84,19 @@ Redis addresses go through `internal/redisutil` — never hand a raw address
 to `redis.Options{Addr:}`, which takes only `host:port` and will dial a
 host named `redis://...` without complaint.
 
+The third store, `stores/gcpsecretmanager`, is a **separate Go module** so
+the Google Cloud SDK stays out of this module's dependency graph. It keeps
+the ring in one Secret Manager secret, one version per rotation, with the
+version number as the revision. Secret Manager has no conditional
+`AddSecretVersion` and no change feed: `Save` therefore serializes on a
+write lease written as a secret annotation under an etag compare-and-set
+(`UpdateSecret`), re-checks the revision *inside* the lease, and `Watch`
+polls version metadata. Do not "simplify" the lease away — without it the
+revision check is advisory, and two nodes rotating at once both append,
+the second erasing the first. See
+`docs/src/ops/gcp-secret-manager.md`. A nested module is invisible to
+`go test ./...`, so it is listed in the Makefile's `SUBMODULES`.
+
 ## Rotation
 
 `parsec keys generate` → `parsec keys promote <kid>` →
@@ -83,6 +111,11 @@ SIGHUP, `parsec keys reload`, or the watcher (5s default, configurable via
 `--keyring-poll`). The interval means the same thing for both stores: the
 file store polls mtime, the Redis store re-reads the ring as a backstop for
 a pub/sub event it never received, since Redis pub/sub is at-most-once.
+
+`gcpsecretmanager.KeyRingStore.Watch` has no event stream to supervise:
+Secret Manager rotation notifications go to Pub/Sub, which would make
+every deployment provision a topic, so its `ReconcileInterval` poll is the
+whole mechanism rather than a backstop.
 
 `RedisKeyRingStore.Watch` supervises its own subscription and never returns
 except on context cancellation; `Parsec.runKeyringWatch` supervises the
