@@ -13,13 +13,11 @@ deliverable. Every other surface is a translator.
 ## Standard workflow for new features and fixes
 
 When the user asks to add a feature, fix a bug, or implement a change,
-follow the playbook in [`.claude/commands/feature.md`](.claude/commands/feature.md).
-The user can also invoke it explicitly via `/feature <description>`. The
-playbook is non-negotiable: plan mode first, then offer the user three
-choices (refine plan / write to GitHub issue / execute end-to-end with
-branch + tests + commit + PR). Do not skip plan mode, do not start a
-branch before the user picks execute, do not commit without `make test`
-and `make lint` passing.
+follow this playbook. It is non-negotiable: plan mode first, then offer
+the user three choices (refine plan / write to GitHub issue / execute
+end-to-end with branch + tests + commit + PR). Do not skip plan mode, do
+not start a branch before the user picks execute, do not commit without
+`make test` and `make lint` passing.
 
 ## Implementation contracts — load on demand
 
