@@ -73,4 +73,3 @@ func TestClaims_Authorizes_EmptyClaimsAlwaysDenied(t *testing.T) {
 		t.Error("empty claims must deny everything")
 	}
 }
-

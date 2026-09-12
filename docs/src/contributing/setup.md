@@ -81,22 +81,33 @@ make cover
 
 ```bash
 make lint
+# gofmt -l .   (via make fmt-check)
 # go vet ./...
 # go run honnef.co/go/tools/cmd/staticcheck@latest ./...
 ```
 
-`make lint` chains `go vet` and `staticcheck`. The `staticcheck` call
-is via `go run` so you don't need to install it separately. All new
-code is expected to pass both. If `staticcheck` flags a lint you
-believe is wrong, add a `//lint:ignore` with a brief rationale rather
-than silently muting the rule.
+`make lint` chains a formatting check, `go vet` and `staticcheck`. The
+`staticcheck` call is via `go run` so you don't need to install it
+separately. All new code is expected to pass all three. If `staticcheck`
+flags a lint you believe is wrong, add a `//lint:ignore` with a brief
+rationale rather than silently muting the rule.
+
+The formatting check runs first and fails fast, listing the offending
+files. `make fmt` fixes them. It exists because neither `vet` nor
+`staticcheck` looks at formatting, so without it the tree drifts silently
+— it had accumulated 32 unformatted files before the check was added.
 
 ## Format
 
 ```bash
-make fmt
-# go fmt ./...
+make fmt         # gofmt -w: reformat in place
+make fmt-check   # gofmt -l: list offenders, exit non-zero, write nothing
 ```
+
+`make fmt-check` is what `make lint` and CI run; `make fmt` is the fixer
+for whatever it reports. Both use the gofmt from the active toolchain's
+GOROOT rather than whichever `gofmt` is on `PATH`, so a mismatched Go
+install cannot produce a tree that looks clean locally and dirty in CI.
 
 Imports are managed by `gofmt`; do not hand-sort them.
 

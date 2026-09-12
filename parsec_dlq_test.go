@@ -45,9 +45,9 @@ func TestParsec_PublishOrSink_LandsTerminalFailureInDLQ(t *testing.T) {
 	failing := &alwaysFailSink{}
 	reg.Register(failing)
 	p, err := New(Options{
-		KeyRing:    ringFromSecret(t, secret),
-		Sinks:      reg,
-		SinkRetry:  sinks.RetryConfig{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond, JitterFraction: 0.01},
+		KeyRing:   ringFromSecret(t, secret),
+		Sinks:     reg,
+		SinkRetry: sinks.RetryConfig{MaxAttempts: 3, BaseBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond, JitterFraction: 0.01},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,9 +93,9 @@ func TestParsec_DLQReplay_DrivesSinkToSuccess(t *testing.T) {
 	s.failsAt.Store(0) // never fail — replay should hit a successful path
 	reg.Register(s)
 	p, err := New(Options{
-		KeyRing:    ringFromSecret(t, secret),
-		Sinks:      reg,
-		SinkRetry:  sinks.RetryConfig{MaxAttempts: 1, BaseBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond, JitterFraction: 0.01},
+		KeyRing:   ringFromSecret(t, secret),
+		Sinks:     reg,
+		SinkRetry: sinks.RetryConfig{MaxAttempts: 1, BaseBackoff: time.Millisecond, MaxBackoff: 2 * time.Millisecond, JitterFraction: 0.01},
 	})
 	if err != nil {
 		t.Fatal(err)

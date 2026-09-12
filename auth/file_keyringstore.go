@@ -11,7 +11,7 @@ import (
 // <state-dir>/keyring.json. Single-node deployments use this; multi-node
 // deployments swap for RedisKeyRingStore.
 type FileKeyRingStore struct {
-	path     string
+	path      string
 	pollEvery time.Duration
 }
 

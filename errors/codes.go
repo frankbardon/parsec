@@ -24,10 +24,10 @@ const (
 	BrokerInternal Code = "PARSEC_BROKER_INTERNAL"
 
 	// Sink codes.
-	SinkUnavailable  Code = "PARSEC_SINK_UNAVAILABLE"
-	SinkConfig       Code = "PARSEC_SINK_CONFIG_INVALID"
-	SinkDLQOverflow  Code = "PARSEC_SINK_DLQ_OVERFLOW"
-	SinkDLQNotFound  Code = "PARSEC_SINK_DLQ_NOT_FOUND"
+	SinkUnavailable Code = "PARSEC_SINK_UNAVAILABLE"
+	SinkConfig      Code = "PARSEC_SINK_CONFIG_INVALID"
+	SinkDLQOverflow Code = "PARSEC_SINK_DLQ_OVERFLOW"
+	SinkDLQNotFound Code = "PARSEC_SINK_DLQ_NOT_FOUND"
 
 	// Rate limit codes.
 	RateLimited Code = "PARSEC_RATE_LIMITED"

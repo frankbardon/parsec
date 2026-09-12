@@ -22,11 +22,11 @@ import (
 // ID tokens with an RSA key and serves the JWKS document so go-oidc's
 // Verifier can fetch the public key during discovery.
 type mockIdP struct {
-	srv     *httptest.Server
-	priv    *rsa.PrivateKey
-	kid     string
-	issuer  string
-	mux     *http.ServeMux
+	srv    *httptest.Server
+	priv   *rsa.PrivateKey
+	kid    string
+	issuer string
+	mux    *http.ServeMux
 }
 
 func newMockIdP(t *testing.T) *mockIdP {

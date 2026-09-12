@@ -101,4 +101,3 @@ func TestResolve_ApplyToOnlyOverridesSetFields(t *testing.T) {
 		t.Errorf("keyring_poll: want 5s (from default), got %v", opts.KeyringPollInterval)
 	}
 }
-

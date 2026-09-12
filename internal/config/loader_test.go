@@ -95,7 +95,6 @@ server:
 	}
 }
 
-
 func TestLoad_InvalidDuration(t *testing.T) {
 	body := `auth:
   mgmt_ttl: "12 hours"`

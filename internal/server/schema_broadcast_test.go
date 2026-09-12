@@ -85,4 +85,3 @@ func TestSchemaBroadcastEndToEnd(t *testing.T) {
 		t.Fatalf("embedded schema missing")
 	}
 }
-

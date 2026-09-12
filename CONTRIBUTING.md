@@ -21,7 +21,8 @@ Thanks for your interest in contributing to Parsec! This guide covers the basics
 ```bash
 make build    # Build CLI binary to bin/parsec
 make test     # Run tests
-make lint     # Run staticcheck (includes vet)
+make lint     # Check formatting, then vet + staticcheck
+make fmt      # Reformat with gofmt (fixes what lint flags)
 make cover    # Run tests with coverage
 make proto    # Regenerate rpc/ from service.proto
 ```

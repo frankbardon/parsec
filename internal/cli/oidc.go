@@ -22,17 +22,17 @@ import (
 // grant — the IdP must implement RFC 8628.
 //
 // The flow:
-//   1. Fetch the issuer's discovery document to find the
-//      device-authorization endpoint and token endpoint.
-//   2. POST to device-authorization with the configured client_id;
-//      receive a user_code, verification_uri, device_code, interval.
-//   3. Print user_code + verification_uri so the operator can complete
-//      the flow in a browser.
-//   4. Poll the token endpoint at `interval` until the operator
-//      approves (status: success) or the device_code expires.
-//   5. Persist the resulting ID token to ~/.parsec/credentials (0600)
-//      so subsequent `parsec --token` invocations pick it up via the
-//      Token() helper.
+//  1. Fetch the issuer's discovery document to find the
+//     device-authorization endpoint and token endpoint.
+//  2. POST to device-authorization with the configured client_id;
+//     receive a user_code, verification_uri, device_code, interval.
+//  3. Print user_code + verification_uri so the operator can complete
+//     the flow in a browser.
+//  4. Poll the token endpoint at `interval` until the operator
+//     approves (status: success) or the device_code expires.
+//  5. Persist the resulting ID token to ~/.parsec/credentials (0600)
+//     so subsequent `parsec --token` invocations pick it up via the
+//     Token() helper.
 func LoginCommand() *ucli.Command {
 	return &ucli.Command{
 		Name:  "login",

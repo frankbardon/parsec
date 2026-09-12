@@ -13,7 +13,8 @@ p, err := parsec.New(parsec.Options{
 ```
 
 The full struct is in `parsec.go`. Each field below corresponds to one
-struct member, in declaration order.
+struct member, in declaration order. Fields not documented here are
+either niche or self-describing — `parsec.go` is the authority.
 
 ## `FS afero.Fs`
 
@@ -46,10 +47,86 @@ not survive a restart.
 
 ## `KeyringPollInterval time.Duration`
 
-Mtime-poll interval for the keyring file watcher. Default 5 seconds.
-The watcher is what makes out-of-band `keyring.json` edits visible to
-a running server. Set to 0 to disable polling — you can still trigger
-a reload with `SIGHUP` or `Parsec.ReloadKeys()`.
+How stale this node's view of the keyring may get. Default 5 seconds.
+
+With `StateDir` it is the mtime-poll interval, which makes out-of-band
+`keyring.json` edits visible to a running server. With Redis it is the
+interval between reconcile reads, which is what catches a rotation whose
+pub/sub event this node never received — Redis pub/sub is at-most-once, so
+without the reconcile a node disconnected at publish time would serve a
+stale ring indefinitely.
+
+A negative value disables the poll; you can still trigger a reload with
+`SIGHUP` or `Parsec.ReloadKeys()`.
+
+## `RedisClient redis.UniversalClient`
+
+Enables multi-node mode. When set, the channel registry, keyring, DLQ,
+rate limiter, cache and refresh store all share this client. Nil means
+single-node in-memory.
+
+Pass a client directly when you need something `RedisAddr` cannot express:
+sentinel or cluster topologies, a custom dialer, or connection pool
+tuning.
+
+## `RedisAddr string`
+
+Convenience alternative to `RedisClient`: parsec builds the client. Accepts
+
+```text
+host:port
+redis://[[user][:password]@]host:port[/db][?opt=val]
+rediss://...   (TLS)
+tcp://...      (alias for redis://)
+unix:///path/to/socket
+```
+
+Sentinel and cluster URLs are rejected — the shared client cannot be built
+from one, so supply `RedisClient` instead. A malformed address fails
+`parsec.New` rather than surfacing later as a dial error.
+
+`parsec.New` also pings Redis before building anything on it, so an
+unreachable Redis fails the boot. `RedisPingTimeout` bounds that check
+(default 5s); a negative value skips it, though note the centrifuge broker
+shard built from this address connects eagerly regardless, so tolerating an
+absent Redis at boot also needs an explicit `RedisShards`.
+
+## `RedisAuth RedisAuth`
+
+Credentials and TLS for the client built from `RedisAddr`, as
+`{Username, Password, DB *int, TLSConfig *tls.Config}`. Set fields override
+whatever the address encoded, so a password from a secret file wins over
+one in the URL. A nil `DB` leaves the address's database alone; a pointer
+to `0` forces database 0. Unused when `RedisClient` is supplied directly.
+
+## Keyring precedence
+
+The four options above interact with `KeyRing` and `StateDir` in one fixed
+order:
+
+| Precedence | Condition | Store |
+|---|---|---|
+| 1 | `KeyRing` non-nil | None — you own persistence |
+| 2 | Redis configured | `auth.RedisKeyRingStore`, shared across nodes |
+| 3 | `StateDir` set | `auth.FileKeyRingStore` at `<StateDir>/keyring.json` |
+| 4 | neither | Ephemeral; tokens die with the process |
+
+Redis beating `StateDir` is the part that surprises people: with both set,
+`keyring.json` is never read or written and Redis holds the only copy of
+the signing keys. `parsec.New` logs a warning when it sees both. Redis
+then needs AOF on and eviction off — see
+[Redis durability](../ops/deployment.md#redis-durability).
+
+## `RedisKeyPrefix string`
+
+Namespaces every parsec key in Redis. Default `parsec`. Override when
+multiple deployments share an instance — it separates the keyring, channel
+registry, DLQ and rate-limit keyspaces in one go.
+
+## `NodeID string`
+
+Identifies this process across the cluster, used to dedupe cross-node
+pub/sub events. Empty auto-generates one.
 
 ## `AccessTokenTTL time.Duration`
 
@@ -97,7 +174,10 @@ attributes (`active_key_id`, `path`, etc.) suitable for JSON sinks.
 |---|---|
 | `FS` | `afero.NewOsFs()` |
 | `Sinks` | empty `sinks.Registry` |
-| `KeyRing` | bootstrapped from `StateDir` (or ephemeral if unset) |
+| `KeyRing` | bootstrapped from Redis if configured, else `StateDir`, else ephemeral |
+| `RedisClient` / `RedisAddr` | unset — single-node in-memory |
+| `RedisKeyPrefix` | `parsec` |
+| `RedisPingTimeout` | 5s |
 | `StateDir` | "" (ephemeral keyring) |
 | `KeyringPollInterval` | 5s |
 | `AccessTokenTTL` | 5m |

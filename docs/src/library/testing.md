@@ -65,6 +65,11 @@ and points parsec at it. The broker, channel registry, keyring, DLQ,
 and rate limiter all switch to their Redis backends — same code paths
 production runs, no docker required:
 
+`NewWithRedis` sets both `RedisClient` and `RedisAddr`. If what you are
+testing depends on how Redis was configured rather than merely that it is,
+use `WithRedisAddr` instead — the two paths resolve some options
+differently, and a test that sets both cannot tell them apart.
+
 ```go
 func TestClusterScenario(t *testing.T) {
     inst := parsectest.NewWithRedis(t)
@@ -112,6 +117,7 @@ inst := parsectest.NewServer(t,
 | `WithSink(sinks.Sink)` | Register a sink before retry/DLQ wrapping |
 | `WithRateLimits(rl)` | Attach per-bucket rate limits |
 | `WithRedis(client)` | Use a pre-built go-redis client (alternative to `NewWithRedis`) |
+| `WithRedisAddr(addr)` | Configure Redis by address only, so parsec builds the client — the path a `parsec serve` deployment takes |
 | `WithOptions(fn)` | Last-resort hook — receives `*parsec.Options` for any setting not surfaced above |
 
 ## What `parsectest.New` does

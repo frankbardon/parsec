@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/frankbardon/parsec/internal/redisutil"
 )
 
 // envInterp matches ${VAR_NAME} placeholders in string fields. Replaced
@@ -106,6 +108,17 @@ func (c *Config) Validate() error {
 	}
 	if err := validateBucket("rate_limits.token_issue", c.RateLimits.TokenIssue); err != nil {
 		return err
+	}
+	if c.Redis.Addr != "" {
+		// Catch a malformed address at load time. Left to the client it
+		// would surface much later as a dial error naming a host that does
+		// not exist, with no hint that the config is at fault.
+		if _, err := redisutil.ClientOptions(c.Redis.Addr, redisutil.Auth{}); err != nil {
+			return fmt.Errorf("config: redis.addr: %w", err)
+		}
+	}
+	if c.Redis.Addr == "" && (c.Redis.Username != "" || c.Redis.Password != "" || c.Redis.TLS.Enabled) {
+		return fmt.Errorf("config: redis credentials set without redis.addr; redis is not enabled")
 	}
 	return nil
 }

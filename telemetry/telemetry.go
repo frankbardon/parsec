@@ -434,7 +434,7 @@ func (r *ringWindow) sum(now time.Time) int64 {
 
 // EnvelopeCounters tracks publish rate + per-aspect counts.
 type EnvelopeCounters struct {
-	mu      chan struct{}
+	mu       chan struct{}
 	byAspect map[string]int64
 	window   ringWindow
 }

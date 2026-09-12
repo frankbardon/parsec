@@ -13,8 +13,8 @@ import (
 	"github.com/frankbardon/parsec/auth"
 	"github.com/frankbardon/parsec/descriptor"
 	perr "github.com/frankbardon/parsec/errors"
+	"github.com/frankbardon/parsec/internal/redisutil"
 	"github.com/frankbardon/parsec/internal/rpcclient"
-	"github.com/redis/go-redis/v9"
 	ucli "github.com/urfave/cli/v3"
 )
 
@@ -408,23 +408,13 @@ func openKeyRingStore(cmd *ucli.Command) (auth.KeyRingStore, func(), error) {
 		}
 		return auth.NewFileKeyRingStore(path, 0), nil, nil
 	case redisAddr != "":
-		client := redis.NewClient(&redis.Options{Addr: stripRedisScheme(redisAddr)})
+		client, err := redisutil.NewClient(redisAddr, redisutil.Auth{})
+		if err != nil {
+			return nil, nil, perr.Wrap(perr.InvalidArgument, "--redis-addr", err)
+		}
 		store := auth.NewRedisKeyRingStore(client).WithKeyPrefix(prefix)
 		return store, func() { _ = client.Close() }, nil
 	default:
 		return nil, nil, perr.New(perr.InvalidArgument, "one of --state-dir or --redis-addr is required")
 	}
 }
-
-// stripRedisScheme accepts both "host:port" and "redis://host:port" so
-// the CLI can take whichever form the operator's deploy template emits.
-// The go-redis client's Options.Addr is a bare host:port.
-func stripRedisScheme(s string) string {
-	for _, p := range []string{"redis://", "rediss://"} {
-		if strings.HasPrefix(s, p) {
-			return strings.TrimPrefix(s, p)
-		}
-	}
-	return s
-}
-

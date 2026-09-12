@@ -22,11 +22,14 @@ package parsec
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/centrifugal/centrifuge"
@@ -41,6 +44,7 @@ import (
 	"github.com/frankbardon/parsec/channels"
 	perr "github.com/frankbardon/parsec/errors"
 	"github.com/frankbardon/parsec/internal/metrics"
+	"github.com/frankbardon/parsec/internal/redisutil"
 	"github.com/frankbardon/parsec/internal/tracing"
 	"github.com/frankbardon/parsec/ratelimit"
 	"github.com/frankbardon/parsec/sinks"
@@ -65,8 +69,11 @@ type Options struct {
 	// non-nil. The directory is created with 0700; the file with 0600.
 	StateDir string
 
-	// KeyringPollInterval enables the mtime-poll watcher when > 0 and a
-	// StateDir is set. Default 5s.
+	// KeyringPollInterval bounds how stale this node's view of the keyring
+	// may get. With a StateDir it is the mtime-poll interval; with Redis it
+	// is how often the ring is re-read as a backstop for a pub/sub event
+	// that never arrived. Default 5s; negative disables the poll (redis
+	// then relies on pub/sub alone).
 	KeyringPollInterval time.Duration
 
 	// RedisClient enables multi-node mode. When set, channel registry,
@@ -75,10 +82,33 @@ type Options struct {
 	RedisClient redis.UniversalClient
 
 	// RedisAddr is a convenience: when set and RedisClient is nil,
-	// parsec.New constructs a default go-redis client. Address syntax
-	// accepts the same forms as centrifuge.RedisShardConfig.Address
-	// (host:port, redis://..., redis+sentinel://..., etc.).
+	// parsec.New constructs a go-redis client from it. Accepted forms:
+	//
+	//	host:port
+	//	redis://[[user][:password]@]host:port[/db][?opt=val]
+	//	rediss://...  (TLS)
+	//	tcp://...     (alias for redis://)
+	//	unix:///path/to/socket
+	//
+	// Sentinel and cluster URLs are rejected — centrifuge's broker
+	// understands them but the shared client cannot be built from one, so
+	// pass a pre-built RedisClient instead. A malformed address fails
+	// parsec.New rather than surfacing as a dial error on first command.
 	RedisAddr string
+
+	// RedisAuth carries credentials and TLS for the client built from
+	// RedisAddr. Set fields override anything encoded in the address, so
+	// a password held in a secret file can override one in the URL. Unused
+	// when RedisClient is supplied directly.
+	RedisAuth RedisAuth
+
+	// RedisPingTimeout bounds the boot-time reachability check performed
+	// when Redis is configured. Zero means the 5s default; a negative
+	// value skips parsec's own check for embedders that start before Redis
+	// is up. Note that the centrifuge broker shard built from RedisAddr
+	// connects eagerly regardless, so a boot that must tolerate an absent
+	// Redis also needs an explicit RedisShards (or a non-Redis broker).
+	RedisPingTimeout time.Duration
 
 	// RedisShards configures the centrifuge Redis broker. When set, the
 	// broker switches from in-memory to Redis-backed. If empty and
@@ -297,15 +327,20 @@ type Parsec struct {
 	logger       *slog.Logger
 	keyringStore auth.KeyRingStore // nil for ephemeral / explicit ring
 
+	// keyMu serializes ring mutations against reloads so a reload cannot
+	// land between a mutation and its persist, which would make a stale
+	// snapshot look current to the store's conflict check.
+	keyMu sync.Mutex
+
 	keyringPath string // empty when not file-backed
 
 	metrics        *metrics.Metrics
 	tracer         trace.Tracer
 	tracerShutdown tracing.ShutdownFunc
 
-	dlq         sinks.DLQ
-	dlqBackend  string // "memory" | "redis"
-	wrappedReg  *sinks.Registry
+	dlq        sinks.DLQ
+	dlqBackend string // "memory" | "redis"
+	wrappedReg *sinks.Registry
 
 	limiter    ratelimit.Limiter
 	rateLimits ratelimit.RateLimits
@@ -336,9 +371,20 @@ func New(opts Options) (*Parsec, error) {
 		logger = slog.Default()
 	}
 
+	// Redis must be normalized BEFORE buildKeyRing: the keyring store is
+	// selected on opts.RedisClient, so leaving this until later silently
+	// downgraded every RedisAddr-configured deployment to a file-backed
+	// (or ephemeral) ring while the manifest still claimed "redis".
+	if err := normalizeRedisOptions(&opts, logger); err != nil {
+		return nil, err
+	}
+
 	ring, keyringStore, keyringPath, err := buildKeyRing(opts, logger)
 	if err != nil {
 		return nil, err
+	}
+	if _, ok := keyringStore.(*auth.RedisKeyRingStore); ok {
+		warnRedisDurability(opts, logger)
 	}
 	signer, err := auth.NewSigner(ring)
 	if err != nil {
@@ -380,9 +426,6 @@ func New(opts Options) (*Parsec, error) {
 		issuer.MaxRefreshTTL = opts.MaxRefreshTokenTTL
 	}
 
-	if err := normalizeRedisOptions(&opts); err != nil {
-		return nil, err
-	}
 	// Compile per-channel rules before resolving the limiter so the
 	// rules end up on the RateLimits we hand back to callers.
 	rules, err := ratelimit.CompileChannelRules(opts.PerChannelPublishLimits)
@@ -547,6 +590,16 @@ func New(opts Options) (*Parsec, error) {
 	if p.opts.JWKSHandler == nil && ringHasAsymmetric(p.ring) {
 		p.opts.JWKSHandler = auth.JWKSHandler(p.ring)
 	}
+	// Count reconcile failures and dropped subscriptions. Installed here
+	// rather than in buildKeyRing because the metrics bundle does not exist
+	// that early; safe because no watch is running until Run.
+	if rs, ok := keyringStore.(*auth.RedisKeyRingStore); ok {
+		rs.WithErrorHook(func(err error) {
+			m.KeyringReconcileErrors.Inc()
+			logger.Warn("parsec: keyring watch error", "err", err)
+		})
+	}
+	p.observeKeyring()
 	return p, nil
 }
 
@@ -675,16 +728,43 @@ func wrapSinks(in *sinks.Registry, cfg sinks.RetryConfig, perSink map[string]sin
 // builds the client; if RedisShards is empty and Redis is configured,
 // it builds a single centrifuge.RedisShard from the same address.
 // Also threads RedisShards into BrokerOptions.
-func normalizeRedisOptions(opts *Options) error {
+func normalizeRedisOptions(opts *Options, logger *slog.Logger) error {
 	if opts.RedisClient == nil && opts.RedisAddr != "" {
-		opts.RedisClient = redis.NewClient(&redis.Options{Addr: opts.RedisAddr})
+		client, err := redisutil.NewClient(opts.RedisAddr, redisutil.Auth{
+			Username: opts.RedisAuth.Username,
+			Password: opts.RedisAuth.Password,
+			DB:       opts.RedisAuth.DB,
+			TLS:      opts.RedisAuth.TLSConfig,
+		})
+		if err != nil {
+			return perr.Wrap(perr.InvalidArgument, "redis address", err)
+		}
+		opts.RedisClient = client
+	}
+	// Ping before the shard is built: centrifuge connects eagerly, so
+	// without this an unreachable Redis surfaces as a shard-construction
+	// error that says nothing about what the operator should fix.
+	if err := pingRedis(*opts, logger); err != nil {
+		return err
 	}
 	if opts.RedisClient != nil && len(opts.RedisShards) == 0 && opts.RedisAddr != "" {
 		node, err := centrifuge.New(centrifuge.Config{})
 		if err != nil {
 			return perr.Wrap(perr.Internal, "centrifuge.New for shard probe", err)
 		}
-		shard, err := centrifuge.NewRedisShard(node, centrifuge.RedisShardConfig{Address: opts.RedisAddr})
+		// The broker parses the address itself, but credentials supplied
+		// out-of-band via RedisAuth have to be handed over explicitly or
+		// the broker authenticates as nobody.
+		shardCfg := centrifuge.RedisShardConfig{
+			Address:   opts.RedisAddr,
+			User:      opts.RedisAuth.Username,
+			Password:  opts.RedisAuth.Password,
+			TLSConfig: opts.RedisAuth.TLSConfig,
+		}
+		if opts.RedisAuth.DB != nil {
+			shardCfg.DB = *opts.RedisAuth.DB
+		}
+		shard, err := centrifuge.NewRedisShard(node, shardCfg)
 		if err != nil {
 			return perr.Wrap(perr.Internal, "build centrifuge redis shard", err)
 		}
@@ -1010,6 +1090,81 @@ func buildManager(opts Options, logger *slog.Logger) *channels.Manager {
 	return m
 }
 
+// defaultRedisPingTimeout bounds the boot-time reachability check.
+const defaultRedisPingTimeout = 5 * time.Second
+
+// pingRedis verifies the configured Redis is actually reachable before
+// any subsystem is built on top of it. go-redis dials lazily, so without
+// this a misconfigured address surfaces much later as a dial error on
+// whichever command happens to run first — or, when the keyring is the
+// only Redis consumer that fails loudly, not at all.
+//
+// Options.RedisPingTimeout < 0 skips the check for embedders that start
+// before their Redis is up.
+func pingRedis(opts Options, logger *slog.Logger) error {
+	if opts.RedisClient == nil || opts.RedisPingTimeout < 0 {
+		return nil
+	}
+	timeout := opts.RedisPingTimeout
+	if timeout == 0 {
+		timeout = defaultRedisPingTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := opts.RedisClient.Ping(ctx).Err(); err != nil {
+		where := opts.RedisAddr
+		if where == "" {
+			where = "the supplied RedisClient"
+		}
+		return perr.Wrap(perr.Internal, "redis unreachable at "+where, err)
+	}
+	logger.Debug("parsec: redis reachable", "addr", opts.RedisAddr)
+	return nil
+}
+
+// warnRedisDurability checks the settings that decide whether a
+// Redis-backed keyring survives. When Redis is the keyring store it holds
+// the ONLY copy of the signing keys, and an empty keyspace is
+// indistinguishable from a first boot: Ensure bootstraps a brand-new ring
+// and every outstanding token in the fleet dies.
+//
+// Advisory only. Managed providers routinely block CONFIG GET, so an
+// unreadable setting is skipped rather than guessed at.
+func warnRedisDurability(opts Options, logger *slog.Logger) {
+	if opts.RedisClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisPingTimeout)
+	defer cancel()
+
+	get := func(param string) (string, bool) {
+		res, err := opts.RedisClient.ConfigGet(ctx, param).Result()
+		if err != nil {
+			return "", false
+		}
+		v, ok := res[param]
+		return v, ok
+	}
+
+	aof, aofOK := get("appendonly")
+	save, saveOK := get("save")
+	// AOF off AND no RDB save points means a restart loses the ring
+	// outright. AOF off with save points is lossy but bounded, so it is
+	// only worth a warning when we can see both.
+	if aofOK && !strings.EqualFold(aof, "yes") && saveOK && strings.TrimSpace(save) == "" {
+		logger.Warn("parsec: redis has no persistence configured (appendonly=no, no save points) "+
+			"but holds the only copy of the keyring; a redis restart invalidates every issued token",
+			"remedy", "enable AOF: redis-server --appendonly yes")
+	}
+
+	if policy, ok := get("maxmemory-policy"); ok && strings.HasPrefix(policy, "allkeys") {
+		logger.Warn("parsec: redis maxmemory-policy evicts any key, including the keyring, "+
+			"which would silently mint a fresh ring and invalidate every issued token",
+			"maxmemory_policy", policy,
+			"remedy", "set maxmemory-policy to noeviction or a volatile-* policy")
+	}
+}
+
 // buildKeyRing resolves the KeyRing precedence: explicit > Redis >
 // StateDir > ephemeral. Returns the chosen ring, the keyring store
 // (for reload), and the on-disk path (empty when no file persistence).
@@ -1022,7 +1177,12 @@ func buildKeyRing(opts Options, logger *slog.Logger) (*auth.KeyRing, auth.KeyRin
 		if prefix == "" {
 			prefix = "parsec"
 		}
-		store := auth.NewRedisKeyRingStore(opts.RedisClient).WithKeyPrefix(prefix)
+		// KeyringPollInterval doubles as the redis reconcile interval: it
+		// already means "how stale may this node's ring get", and the
+		// answer should not depend on which store backs it.
+		store := auth.NewRedisKeyRingStore(opts.RedisClient).
+			WithKeyPrefix(prefix).
+			WithReconcileInterval(opts.KeyringPollInterval)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		ring, bootstrapped, err := store.Ensure(ctx)
@@ -1035,6 +1195,15 @@ func buildKeyRing(opts Options, logger *slog.Logger) (*auth.KeyRing, auth.KeyRin
 		} else {
 			logger.Info("parsec: loaded keyring from redis",
 				"prefix", prefix, "active_key_id", ring.ActiveID())
+		}
+		if opts.StateDir != "" {
+			// Redis wins the precedence, so keyring.json is neither read
+			// nor written. Say so: a StateDir in the config reads like a
+			// durable backup, and it is not one.
+			logger.Warn("parsec: StateDir is set but redis holds the keyring; "+
+				"keyring.json is not read or written and redis is the only copy of the signing keys",
+				"state_dir", opts.StateDir,
+				"remedy", "back up with: parsec keys export --redis-addr <addr>")
 		}
 		return ring, store, "", nil
 	}
@@ -1294,23 +1463,137 @@ func (p *Parsec) Run(ctx context.Context) error {
 		}()
 	}
 	if p.keyringStore != nil {
-		go func() {
-			err := p.keyringStore.Watch(ctx, func(fresh *auth.KeyRing) {
-				if err := p.ring.LoadSnapshot(fresh.Snapshot()); err != nil {
-					p.logger.Warn("parsec: keyring reload error", "err", err)
-					return
-				}
-				p.logger.Info("parsec: keyring reloaded", "active_key_id", fresh.ActiveID())
-			})
-			if err != nil {
-				p.logger.Warn("parsec: keyring watch exited", "err", err)
-			}
-		}()
+		go p.runKeyringWatch(ctx)
 	}
+	go p.runKeyringObserver(ctx)
 	if p.dlq != nil && p.metrics != nil {
 		go p.runDLQScrape(ctx)
 	}
 	return p.broker.Run(ctx)
+}
+
+// keyringBackendLabel names the store persisting this node's ring, for the
+// parsec_keyring_backend gauge.
+func (p *Parsec) keyringBackendLabel() string {
+	switch p.keyringStore.(type) {
+	case *auth.RedisKeyRingStore:
+		return metrics.KeyringBackendRedis
+	case *auth.FileKeyRingStore:
+		return metrics.KeyringBackendFile
+	case nil:
+		if p.opts.KeyRing != nil {
+			return metrics.KeyringBackendExternal
+		}
+		return metrics.KeyringBackendEphemeral
+	default:
+		return metrics.KeyringBackendExternal
+	}
+}
+
+// observeKeyring refreshes the keyring gauges. Called at boot, after every
+// reload or rotation, and on a ticker so the active key's age does not go
+// stale between rotations.
+func (p *Parsec) observeKeyring() {
+	if p.metrics == nil {
+		return
+	}
+	backend := p.keyringBackendLabel()
+	for _, b := range []string{
+		metrics.KeyringBackendFile, metrics.KeyringBackendRedis,
+		metrics.KeyringBackendEphemeral, metrics.KeyringBackendExternal,
+	} {
+		v := 0.0
+		if b == backend {
+			v = 1
+		}
+		p.metrics.KeyringBackend.WithLabelValues(b).Set(v)
+	}
+
+	// Only a shared store carries a revision. File and ephemeral rings
+	// report -1 rather than a number that would look comparable.
+	version := float64(-1)
+	if rs, ok := p.keyringStore.(*auth.RedisKeyRingStore); ok {
+		version = float64(rs.Version())
+	}
+	p.metrics.KeyringVersion.Set(version)
+
+	if active, err := p.ring.Active(); err == nil {
+		p.metrics.KeyringActiveKeyAge.Set(time.Since(active.CreatedAt).Seconds())
+	}
+}
+
+// runKeyringObserver refreshes the keyring gauges periodically. The active
+// key's age advances on its own, so a rotation that never happens has to
+// become visible without any event to hang the update on.
+func (p *Parsec) runKeyringObserver(ctx context.Context) {
+	interval := p.opts.KeyringPollInterval
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			p.observeKeyring()
+		}
+	}
+}
+
+// runKeyringWatch keeps the ring in step with the backing store for the
+// life of ctx.
+//
+// The watch is supervised: a store whose Watch returns — a dropped Redis
+// subscription that could not be re-established, a transport error — is
+// restarted with capped backoff. Letting it exit instead left the node
+// serving keys that could never be updated again, with one log line as
+// the only sign, so a rotation elsewhere in the fleet would silently fail
+// to reach it.
+func (p *Parsec) runKeyringWatch(ctx context.Context) {
+	const (
+		minBackoff = 250 * time.Millisecond
+		maxBackoff = 30 * time.Second
+	)
+	backoff := minBackoff
+	for ctx.Err() == nil {
+		started := time.Now()
+		p.setKeyringWatchUp(1)
+		err := p.keyringStore.Watch(ctx, func(fresh *auth.KeyRing) {
+			p.keyMu.Lock()
+			if err := p.ring.LoadSnapshot(fresh.Snapshot()); err != nil {
+				p.keyMu.Unlock()
+				p.logger.Warn("parsec: keyring reload error", "err", err)
+				return
+			}
+			p.keyMu.Unlock()
+			p.logger.Info("parsec: keyring reloaded", "active_key_id", fresh.ActiveID())
+			p.observeKeyring()
+		})
+		p.setKeyringWatchUp(0)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
+			p.logger.Warn("parsec: keyring watch exited, restarting", "err", err, "retry_in", backoff)
+		} else {
+			p.logger.Warn("parsec: keyring watch returned without error, restarting", "retry_in", backoff)
+		}
+		// A watch that ran for a while before failing gets a prompt retry;
+		// one failing immediately backs off.
+		if time.Since(started) > maxBackoff {
+			backoff = minBackoff
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < maxBackoff {
+			backoff *= 2
+		}
+	}
 }
 
 // runDLQScrape periodically calls DLQ.Count(sink) for every registered
@@ -1373,6 +1656,13 @@ func (p *Parsec) ReloadKeys() error {
 	if p.keyringStore == nil {
 		return perr.New(perr.InvalidArgument, "no keyring store configured; pass Options.StateDir or Options.RedisClient")
 	}
+	p.keyMu.Lock()
+	defer p.keyMu.Unlock()
+	return p.reloadKeysLocked()
+}
+
+// reloadKeysLocked re-reads the ring. Callers hold keyMu.
+func (p *Parsec) reloadKeysLocked() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	fresh, err := p.keyringStore.Load(ctx)
@@ -1393,6 +1683,47 @@ func (p *Parsec) persistKeyRing() error {
 	return p.keyringStore.Save(ctx, p.ring)
 }
 
+// maxKeyMutationAttempts bounds the reload-and-reapply retry loop.
+const maxKeyMutationAttempts = 5
+
+// mutateKeys applies a ring mutation and persists it, re-applying against
+// a freshly loaded ring when a concurrent node rotated in between.
+//
+// A store-level save is a whole-snapshot write, so without this a node
+// holding a stale ring would erase another node's rotation. The shared
+// store detects that as auth.ErrKeyRingConflict; the fix is to reload and
+// redo the mutation, not to force the write.
+//
+// keyMu serializes mutations against the watcher's reloads on this node:
+// the conflict check compares versions, so a reload landing between apply
+// and save would make a stale write look current.
+func (p *Parsec) mutateKeys(apply func(*auth.KeyRing) error) error {
+	p.keyMu.Lock()
+	defer p.keyMu.Unlock()
+
+	var lastErr error
+	for attempt := range maxKeyMutationAttempts {
+		if err := apply(p.ring); err != nil {
+			return err
+		}
+		err := p.persistKeyRing()
+		if err == nil {
+			p.observeKeyring()
+			return nil
+		}
+		if !errors.Is(err, auth.ErrKeyRingConflict) {
+			return perr.Wrap(perr.Internal, "persist keyring", err)
+		}
+		lastErr = err
+		p.logger.Info("parsec: keyring changed underneath a rotation, reloading and retrying",
+			"attempt", attempt+1)
+		if rerr := p.reloadKeysLocked(); rerr != nil {
+			return perr.Wrap(perr.Internal, "reload keyring after conflict", rerr)
+		}
+	}
+	return perr.Wrap(perr.Internal, "persist keyring", lastErr)
+}
+
 // GenerateKey mints a new HS256 key (joins the ring as verify-only) and
 // persists if StateDir is configured.
 func (p *Parsec) GenerateKey() (auth.Key, error) {
@@ -1404,12 +1735,18 @@ func (p *Parsec) GenerateKey() (auth.Key, error) {
 // did not wire an explicit JWKSHandler, parsec auto-installs one so
 // the next /parsec/jwks.json hit picks the new public material up.
 func (p *Parsec) GenerateKeyAlg(alg auth.Alg) (auth.Key, error) {
-	k, err := p.ring.GenerateAlg(alg)
-	if err != nil {
-		return auth.Key{}, perr.Wrap(perr.InvalidArgument, "generate key", err)
-	}
-	if err := p.persistKeyRing(); err != nil {
-		return auth.Key{}, perr.Wrap(perr.Internal, "persist keyring", err)
+	var k auth.Key
+	// On a conflict retry the key is minted again against the reloaded
+	// ring, so the returned key is always the one that was persisted.
+	if err := p.mutateKeys(func(r *auth.KeyRing) error {
+		gen, gerr := r.GenerateAlg(alg)
+		if gerr != nil {
+			return perr.Wrap(perr.InvalidArgument, "generate key", gerr)
+		}
+		k = gen
+		return nil
+	}); err != nil {
+		return auth.Key{}, err
 	}
 	if p.opts.JWKSHandler == nil && k.Alg.IsAsymmetric() {
 		p.opts.JWKSHandler = auth.JWKSHandler(p.ring)
@@ -1420,11 +1757,13 @@ func (p *Parsec) GenerateKeyAlg(alg auth.Alg) (auth.Key, error) {
 
 // PromoteKey makes id the active signing key.
 func (p *Parsec) PromoteKey(id string) error {
-	if err := p.ring.Promote(id); err != nil {
-		return perr.Wrap(perr.InvalidArgument, "promote key", err)
-	}
-	if err := p.persistKeyRing(); err != nil {
-		return perr.Wrap(perr.Internal, "persist keyring", err)
+	if err := p.mutateKeys(func(r *auth.KeyRing) error {
+		if err := r.Promote(id); err != nil {
+			return perr.Wrap(perr.InvalidArgument, "promote key", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	p.metrics.KeyRotationsTotal.WithLabelValues(metrics.KeyActionPromoted).Inc()
 	return nil
@@ -1432,11 +1771,13 @@ func (p *Parsec) PromoteKey(id string) error {
 
 // RetireKey removes id from verification.
 func (p *Parsec) RetireKey(id string) error {
-	if err := p.ring.Retire(id); err != nil {
-		return perr.Wrap(perr.InvalidArgument, "retire key", err)
-	}
-	if err := p.persistKeyRing(); err != nil {
-		return perr.Wrap(perr.Internal, "persist keyring", err)
+	if err := p.mutateKeys(func(r *auth.KeyRing) error {
+		if err := r.Retire(id); err != nil {
+			return perr.Wrap(perr.InvalidArgument, "retire key", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	p.metrics.KeyRotationsTotal.WithLabelValues(metrics.KeyActionRetired).Inc()
 	return nil
@@ -1665,3 +2006,24 @@ type (
 )
 
 var _ = errors.New // keep stdlib errors imported for any future surface
+
+// RedisAuth holds the credential and transport overrides applied to the
+// client parsec builds from Options.RedisAddr. Every field is optional.
+type RedisAuth struct {
+	Username string
+	Password string
+	// DB selects the logical database. Nil leaves whatever the address
+	// encoded; a pointer to 0 forces database 0.
+	DB *int
+	// TLSConfig forces TLS with this config — needed for a private CA. A
+	// rediss:// address already gets a default config without it.
+	TLSConfig *tls.Config
+}
+
+// setKeyringWatchUp records whether the keyring watcher is running. A node
+// sitting at 0 cannot observe rotations performed on other nodes.
+func (p *Parsec) setKeyringWatchUp(v float64) {
+	if p.metrics != nil {
+		p.metrics.KeyringWatchUp.Set(v)
+	}
+}

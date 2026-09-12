@@ -43,6 +43,18 @@ func ServeCommand() *ucli.Command {
 				Sources: ucli.EnvVars("PARSEC_STATE_DIR"),
 			},
 			&ucli.StringFlag{
+				Name: "redis-addr",
+				Usage: "Shared Redis for multi-node mode: host:port or a redis://, rediss://, " +
+					"tcp:// or unix:// URL. Enables the redis-backed keyring, channel registry, " +
+					"DLQ and rate limiter.",
+				Sources: ucli.EnvVars("PARSEC_REDIS_ADDR"),
+			},
+			&ucli.StringFlag{
+				Name:    "redis-key-prefix",
+				Usage:   "Namespace for every parsec key in Redis. Default \"parsec\".",
+				Sources: ucli.EnvVars("PARSEC_REDIS_KEY_PREFIX"),
+			},
+			&ucli.StringFlag{
 				Name:    "mgmt-subject",
 				Value:   "operator",
 				Usage:   "Subject (sub claim) for the bootstrap mgmt token printed at boot",
@@ -55,9 +67,11 @@ func ServeCommand() *ucli.Command {
 				Sources: ucli.EnvVars("PARSEC_MGMT_TTL"),
 			},
 			&ucli.DurationFlag{
-				Name:    "keyring-poll",
-				Value:   5 * time.Second,
-				Usage:   "Interval between keyring.json mtime checks. 0 disables polling.",
+				Name:  "keyring-poll",
+				Value: 5 * time.Second,
+				Usage: "How stale this node's view of the keyring may get: the keyring.json mtime " +
+					"check interval, or with redis the interval between reconcile reads that " +
+					"catch a missed rotation event. 0 uses the default, negative disables it.",
 				Sources: ucli.EnvVars("PARSEC_KEYRING_POLL"),
 			},
 			&ucli.BoolFlag{
@@ -136,6 +150,12 @@ func ServeCommand() *ucli.Command {
 			}
 			if cmd.IsSet("keyring-poll") || opts.KeyringPollInterval == 0 {
 				opts.KeyringPollInterval = cmd.Duration("keyring-poll")
+			}
+			if addr := cmd.String("redis-addr"); addr != "" {
+				opts.RedisAddr = addr
+			}
+			if prefix := cmd.String("redis-key-prefix"); prefix != "" {
+				opts.RedisKeyPrefix = prefix
 			}
 
 			// Admin UI flag: --admin-ui sets the toggle when explicitly

@@ -53,10 +53,10 @@ func TestParseRateSpec_HappyPaths(t *testing.T) {
 
 func TestParseRateSpec_ErrorCases(t *testing.T) {
 	cases := []string{
-		"abc",       // missing /
-		"abc/s",     // non-integer rate
-		"10/wat",    // bad duration
-		"10/0s",     // zero window
+		"abc",    // missing /
+		"abc/s",  // non-integer rate
+		"10/wat", // bad duration
+		"10/0s",  // zero window
 	}
 	for _, spec := range cases {
 		t.Run(spec, func(t *testing.T) {

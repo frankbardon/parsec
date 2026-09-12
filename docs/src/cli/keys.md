@@ -89,6 +89,17 @@ to share signing keys without a live RPC route between them.
 Source flags `--state-dir` and `--redis-addr` are mutually exclusive;
 exactly one must be set. Output goes to stdout unless `--out` is given.
 
+`--redis-addr` takes `host:port` or a `redis://`, `rediss://`, `tcp://` or
+`unix://` URL, and honors credentials and the database the URL carries
+(`redis://user:pass@host:6379/2`). `rediss://` connects over TLS — it used
+to be accepted and then silently downgraded to plaintext, so re-check any
+runbook that relied on the old behavior working at all. Sentinel and
+cluster URLs are rejected rather than mis-dialed.
+
+An exported snapshot contains **unencrypted signing keys**: HMAC secrets
+and private PEMs. Treat the file as a secret — `umask 077` before
+exporting, and delete it when the transfer is done.
+
 ## keys import
 
 ```bash

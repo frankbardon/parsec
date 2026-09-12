@@ -13,13 +13,11 @@ deliverable. Every other surface is a translator.
 ## Standard workflow for new features and fixes
 
 When the user asks to add a feature, fix a bug, or implement a change,
-follow the playbook in [`.claude/commands/feature.md`](.claude/commands/feature.md).
-The user can also invoke it explicitly via `/feature <description>`. The
-playbook is non-negotiable: plan mode first, then offer the user three
-choices (refine plan / write to GitHub issue / execute end-to-end with
-branch + tests + commit + PR). Do not skip plan mode, do not start a
-branch before the user picks execute, do not commit without `make test`
-and `make lint` passing.
+follow this playbook. It is non-negotiable: plan mode first, then offer
+the user three choices (refine plan / write to GitHub issue / execute
+end-to-end with branch + tests + commit + PR). Do not skip plan mode, do
+not start a branch before the user picks execute, do not commit without
+`make test` and `make lint` passing.
 
 ## Implementation contracts — load on demand
 
@@ -44,7 +42,9 @@ focused contract; load only what you need.
 ```bash
 make build            # bin/parsec
 make test             # go test ./...
-make lint             # go vet + staticcheck
+make lint             # gofmt check + go vet + staticcheck
+make fmt              # gofmt -w (the fixer for what `make lint` flags)
+make fmt-check        # gofmt check alone, no writes
 make cover            # coverage profile
 make proto            # regenerate rpc/ from service.proto (requires protoc + protoc-gen-twirp)
 make docs             # mdbook build
@@ -73,6 +73,7 @@ Any change to a public surface MUST update its docs in the same PR.
 | New ingress point | `service.Service` call site consulting `Parsec.CheckRateLimit` before doing work; documented bucket key; entry in `docs/src/ops/rate-limiting.md` |
 | New telemetry Snapshot field | `telemetry/telemetry.go` Source method + Aggregator sum branch + corresponding `parsec_telemetry_*` gauge in `telemetry/prom.go` + metric-reference row in `docs/src/ops/telemetry-alerts.md` |
 | New severity level | `telemetry/alerts.go` Severity const + `Valid()` branch + table row in `docs/src/ops/telemetry-alerts.md` |
+| New `auth.KeyRingStore` impl | implement all three interface methods (`Load` / `Save` / `Watch`) + `Watch` MUST supervise itself and return only on ctx cancel — a watch that exits leaves the node serving keys it can never update again + tests written to fail without their fix (assert the failure mode, not just the happy path). **If the store is shared across nodes**, also: `Load` pairs the snapshot with the revision it belongs to; `Save` is a compare-and-set against the last-loaded revision, returning `auth.ErrKeyRingConflict` instead of overwriting a concurrent rotation; a periodic reconcile so a dropped change notification still converges; bootstrap is a CAS against "still empty" so concurrent first boots adopt one ring rather than the loser signing with overwritten keys + entry in `docs/src/ops/deployment.md` + `.claude/context/auth.md` |
 | New `tokenbroker.RevocationStore` impl | implement all four interface methods + apply `MaxTTL` semantics + tests for token-scope + user-scope round trips + entry in `docs/src/ops/token-broker.md` |
 | New `cache.Cache` backend | implement all 7 interface methods + return a stable `cache.Stats` shape + optional `cache.BackendReporter` for manifest label + entry in the backend table in `docs/src/ops/cache.md` |
 | Change to `channels/name.go` grammar | port to `clients/js/src/channels.ts` in the same PR + mirror the new test case in `clients/js/test/channels.test.ts` |

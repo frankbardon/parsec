@@ -65,15 +65,15 @@ type SubscribeOptions struct {
 
 // HistoryOptions controls a history fetch.
 type HistoryOptions struct {
-	Limit  int
-	Since  int64 // since sequence (exclusive)
-	Until  int64 // until sequence (inclusive); 0 = unbounded
+	Limit int
+	Since int64 // since sequence (exclusive)
+	Until int64 // until sequence (inclusive); 0 = unbounded
 }
 
 // PresenceEntry is one entry in the presence list.
 type PresenceEntry struct {
-	UserID string `json:"user_id"`
-	ClientID string `json:"client_id"`
+	UserID   string          `json:"user_id"`
+	ClientID string          `json:"client_id"`
 	ConnInfo json.RawMessage `json:"conn_info,omitempty"`
 }
 
@@ -81,10 +81,10 @@ type PresenceEntry struct {
 type ClientOption func(*clientConfig)
 
 type clientConfig struct {
-	Transport  Transport
-	Producer   envelope.Producer
-	Validator  *schema.Validator
-	Sequence   *envelope.SequenceTracker
+	Transport   Transport
+	Producer    envelope.Producer
+	Validator   *schema.Validator
+	Sequence    *envelope.SequenceTracker
 	Snapshotter SequenceSnapshotter
 }
 
@@ -128,10 +128,10 @@ func WithSnapshotter(s SequenceSnapshotter) ClientOption {
 
 // Client is the top-level envelope-aware client.
 type Client struct {
-	cfg     clientConfig
-	conn    bool
-	mu      sync.Mutex
-	subs    map[string]*Subscription
+	cfg  clientConfig
+	conn bool
+	mu   sync.Mutex
+	subs map[string]*Subscription
 }
 
 // New constructs a Client.
@@ -196,8 +196,8 @@ func (c *Client) Close() error {
 //   - Aspect       — required
 //   - Payload      — payload bytes (already JSON-encoded)
 //   - Causation    — optional; set by clients that want explicit DAG
-//                    edges (PublishDerived on a Subscription does this
-//                    automatically)
+//     edges (PublishDerived on a Subscription does this
+//     automatically)
 //   - SchemaRef    — optional
 //
 // Stamped automatically:
@@ -293,22 +293,22 @@ func (c *Client) History(ctx context.Context, channel string, opts HistoryOption
 // dispatched in registration order; OnEnvelope handlers see every
 // envelope, OnAspect handlers see only envelopes matching their aspect.
 type Subscription struct {
-	client    *Client
-	channel   string
-	opts      SubscribeOptions
-	ctx       context.Context
-	cancel    context.CancelFunc
-	gap       *envelope.GapDetector
+	client  *Client
+	channel string
+	opts    SubscribeOptions
+	ctx     context.Context
+	cancel  context.CancelFunc
+	gap     *envelope.GapDetector
 
-	mu             sync.RWMutex
-	onEnvelope     []func(envelope.Envelope)
-	onGap          []func(channel string, gap int64)
-	aspectFuncs    map[string][]func(envelope.Envelope)
-	current        envelope.Envelope // last envelope dispatched — feeds PublishDerived
-	currentValid   bool
-	filter         map[string]bool // local aspect filter (when transport does not push filter)
+	mu           sync.RWMutex
+	onEnvelope   []func(envelope.Envelope)
+	onGap        []func(channel string, gap int64)
+	aspectFuncs  map[string][]func(envelope.Envelope)
+	current      envelope.Envelope // last envelope dispatched — feeds PublishDerived
+	currentValid bool
+	filter       map[string]bool // local aspect filter (when transport does not push filter)
 
-	lastSeq        int64
+	lastSeq int64
 }
 
 // Channel returns the subscribed channel name.

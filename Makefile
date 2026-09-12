@@ -1,4 +1,4 @@
-.PHONY: build clean test test-integration cover fmt vet lint proto docs docs-serve docs-clean playground
+.PHONY: build clean test test-integration cover fmt fmt-check vet lint proto docs docs-serve docs-clean playground
 
 BINARY_NAME=parsec
 BUILD_DIR=bin
@@ -42,10 +42,30 @@ cover:
 fmt:
 	$(GO) fmt ./...
 
+# fmt-check is the read-only counterpart of `fmt`: same rules, no writes.
+# Two details matter here.
+#
+# `gofmt -l` exits 0 whether or not it lists anything, so the file list has
+# to be converted into an exit status by hand.
+#
+# gofmt comes from the active toolchain's GOROOT rather than PATH. A PATH
+# gofmt can be a different Go release than the one building the code, which
+# produces the worst kind of failure: clean locally, dirty in CI.
+fmt-check:
+	@files="$$($$($(GO) env GOROOT)/bin/gofmt -l .)"; \
+	if [ -n "$$files" ]; then \
+		echo "not gofmt-clean:"; \
+		echo "$$files" | sed 's/^/  /'; \
+		echo "run 'make fmt' to fix"; \
+		exit 1; \
+	fi
+
 vet:
 	$(GO) vet ./...
 
-lint: vet
+# fmt-check runs first: neither vet nor staticcheck looks at formatting,
+# which is how 32 files drifted out of format unnoticed.
+lint: fmt-check vet
 	$(GO) run honnef.co/go/tools/cmd/staticcheck@latest ./...
 
 # Regenerate protobuf + Twirp bindings from rpc/service.proto.

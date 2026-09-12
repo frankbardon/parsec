@@ -123,7 +123,10 @@ parsec keys import --redis-addr eu-west-redis:6379 < /tmp/keyring.json
 
 `keys import` calls `KeyRingStore.Save` which (for Redis) bumps the
 version key and publishes the rotation event, so every parsec node in
-the target region reloads through its existing watch goroutine.
+the target region reloads through its existing watch goroutine. A node
+that was disconnected when the event went out picks the import up on its
+next reconcile read (`--keyring-poll`, default 5s) instead of missing it
+outright.
 
 #### Collision safety
 
@@ -155,7 +158,7 @@ The CLI does the local retire first, then POSTs to each peer's
 `/twirp/parsec.ParsecService/ReloadKeys` with the operator's current
 bearer (so peers must trust the same kid via a shared keyring — usually
 via Pattern 1 first, or via a shared OIDC issuer from
-[Phase 21](../auth/oidc.md)).
+[Phase 21](oidc.md)).
 
 Individual peer failures log a warning but **do not roll back** the
 local retire — propagation is best-effort. The envelope output
@@ -198,6 +201,16 @@ with two `--to` targets.
   the subscriber, exit 0).
 - The daemon needs network access to **all** Redis instances. Place
   it accordingly in your VPC peering / firewall rules.
+- `--from` and `--to` take `host:port` or a full `redis://`, `rediss://`,
+  `tcp://` or `unix://` URL, and honor the credentials and database the URL
+  carries (`redis://user:pass@host:6379/2`). Cross-region links usually
+  need both, so prefer the URL form here.
+
+  `rediss://` now connects over TLS. It was previously accepted and then
+  silently downgraded to plaintext, so a link you believed was encrypted
+  was not — re-check any cross-region runbook that used it. Sentinel and
+  cluster URLs are rejected outright rather than mis-dialed; point the
+  daemon at a concrete instance.
 
 ## Push vs Pull — picking a pattern
 
@@ -239,6 +252,8 @@ continuously so rotations propagate automatically.
 | Peer region unreachable during `--notify` | The local retire still succeeds. The unreachable region keeps verifying the old kid until reachable + reloaded. |
 | `parsec-keys-sync` crashes              | No data loss — restart with the same flags. Rotations missed during downtime can be triggered manually with `parsec keys reload` on the target region.    |
 | Two regions promote different keys      | The last `import` wins. Prefer Pattern 1 (operator-driven) for promotion; promotion is a deliberate operator action, not a rotation event. |
+| A region's Redis pub/sub drops an event | Nothing is lost permanently. Each node re-reads the ring every `--keyring-poll` (default 5s) and reconnects its subscription, so a missed rotation converges within one poll interval. Watch `parsec_keyring_version` per node: a node stuck at a lower revision has not caught up. |
+| A region's Redis loses its keyspace     | That region mints a **new** ring on next boot and stops verifying every token the fleet issued. Redis needs AOF on and eviction off — see [deployment](deployment.md#redis-durability) — and a keyring backup via `parsec keys export`. |
 
 ## Out of scope
 

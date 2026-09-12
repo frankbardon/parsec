@@ -10,7 +10,8 @@ expire naturally.
 
 ## Preconditions
 
-- Parsec is running with `--state-dir <dir>`. Without it the keyring is
+- Parsec is running with `--state-dir <dir>` (or with Redis configured, which
+holds the keyring instead — see [multi-node](#multi-node-deployments)). Without it the keyring is
   ephemeral and rotation does nothing useful.
 - You have a valid mgmt bearer token. Export it as `PARSEC_TOKEN`.
 - You know the longest TTL in use:
@@ -76,15 +77,34 @@ Both achieve the same swap.
 
 ## Multi-node deployments
 
-Point every Parsec node at a shared Redis (`Options.RedisClient` or
-the YAML `redis.addr` field). The Redis-backed `KeyRingStore`
-publishes a version event on every rotation, and every node subscribes
-— `parsec keys generate/promote/retire` on any one node propagates to
-the rest of the cluster within milliseconds without operator
-intervention. The file-backed keyring + NFS pattern still works for
-deployments without Redis; in that case disable the mtime poller on
-all but one node (`--keyring-poll 0`) and `SIGHUP` the others after
-each rotation.
+Point every Parsec node at a shared Redis (`--redis-addr`, the YAML
+`redis.addr` field, or `Options.RedisClient`). The Redis-backed
+`KeyRingStore` publishes a version event on every rotation and every node
+subscribes, so `parsec keys generate/promote/retire` on any one node
+propagates to the rest of the cluster within milliseconds without
+operator intervention.
+
+Redis pub/sub is at-most-once, so a node that was disconnected at publish
+time never receives that event. Each node therefore also re-reads the ring
+every `--keyring-poll` (default 5s) as a backstop, and reconnects its
+subscription automatically. The worst case for a missed rotation is one
+poll interval, not "until someone restarts that node".
+
+Two signals tell you whether the fleet actually agrees:
+
+| Metric | Healthy |
+|---|---|
+| `parsec_keyring_version` | The same number on every node. A node stuck at a lower revision has not picked the rotation up. |
+| `parsec_keyring_watch_up` | `1` everywhere. A node at `0` is between watcher restarts and cannot see remote rotations. |
+
+Concurrent rotations on two nodes are safe: a save built from a ring that
+is no longer current is refused and retried against a fresh one, so
+neither node's keys are dropped. Rotating from one node at a time is still
+the simpler operational habit.
+
+The file-backed keyring + NFS pattern still works for deployments without
+Redis; in that case disable the mtime poller on all but one node
+(`--keyring-poll 0`) and `SIGHUP` the others after each rotation.
 
 ## What if I have to break glass?
 
