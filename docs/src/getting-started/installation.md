@@ -65,7 +65,8 @@ The same Makefile drives the rest of the development loop:
 
 ```bash
 make test       # go test ./...
-make lint       # go vet + staticcheck
+make lint       # gofmt check + go vet + staticcheck
+make fmt        # gofmt -w (fixes what lint flags)
 make cover      # coverage profile
 make docs       # mdbook build (requires mdbook on PATH)
 ```

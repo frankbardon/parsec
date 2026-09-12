@@ -44,7 +44,9 @@ focused contract; load only what you need.
 ```bash
 make build            # bin/parsec
 make test             # go test ./...
-make lint             # go vet + staticcheck
+make lint             # gofmt check + go vet + staticcheck
+make fmt              # gofmt -w (the fixer for what `make lint` flags)
+make fmt-check        # gofmt check alone, no writes
 make cover            # coverage profile
 make proto            # regenerate rpc/ from service.proto (requires protoc + protoc-gen-twirp)
 make docs             # mdbook build
