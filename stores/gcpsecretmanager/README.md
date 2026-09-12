@@ -104,16 +104,20 @@ off the binding is fine — the store uses the existing secret.
 ## Development
 
 The module pins a published parsec version, so `go get` resolves it the way
-a consumer's build does. That means it builds against the released parsec,
-not your working tree — to develop the two together, create a go workspace
-at the repo root:
+a consumer's build does. The repo ships a `go.work` that overrides the pin
+with the working tree, so `go test ./...` here exercises your local parsec
+changes with no extra setup.
+
+To build the way a consumer does — against the pinned, published parsec —
+turn the workspace off:
 
 ```bash
-go work init . ./stores/gcpsecretmanager
+GOWORK=off go build ./... && GOWORK=off go test ./...
 ```
 
-The workspace is local only; `go get` and consumers ignore it. Keep
-`GOWORK=off` when verifying that the published module is go-gettable.
+CI runs both: `make test` through the workspace, and a `submodule-pin` job
+with `GOWORK=off` that also rejects a `replace` directive, which consumers
+ignore and which would make a tagged module ungettable.
 
 ```bash
 go test ./...      # runs against an in-process fake Secret Manager

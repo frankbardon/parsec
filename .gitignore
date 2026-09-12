@@ -21,9 +21,15 @@ coverage.out
 coverage.html
 *.prof
 
-# Go workspace
-go.work
+# Go workspace. go.work IS committed: every `use` path is relative and
+# inside this repo, so it is identical on every machine and makes the
+# nested modules build against the working tree. go.work.sum is local
+# churn and stays ignored.
 go.work.sum
+
+# Release binaries (make build uses bin/; dist/ is for cross-compiled
+# release assets)
+dist/
 vendor/
 
 # Dependency dirs

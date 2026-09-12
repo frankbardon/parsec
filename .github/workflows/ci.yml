@@ -51,6 +51,37 @@ jobs:
       - name: Lint
         run: make lint
 
+  # The committed go.work makes `make build` / `make test` resolve the
+  # nested modules against the working tree, which is what you want while
+  # developing them alongside the root module. It also hides a stale or
+  # broken pin: a consumer ignores the workspace and resolves the version
+  # in stores/*/go.mod. This job is the other half — GOWORK=off builds and
+  # tests each nested module against the version it actually pins, and
+  # fails on a replace directive, which a consumer would ignore and which
+  # makes a tagged nested module ungettable.
+  submodule-pin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+
+      - name: Build and test each nested module against its pinned parsec
+        env:
+          GOWORK: "off"
+        run: |
+          for m in stores/gcpsecretmanager; do
+            echo "==> $m"
+            if grep -qE '^[[:space:]]*replace[[:space:]]+github.com/frankbardon/parsec' "$m/go.mod"; then
+              echo "$m/go.mod carries a replace for parsec; consumers ignore it" >&2
+              exit 1
+            fi
+            (cd "$m" && go build ./... && go test ./...) || exit 1
+          done
+
   js:
     runs-on: ubuntu-latest
     defaults:

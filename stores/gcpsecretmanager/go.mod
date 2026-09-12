@@ -4,9 +4,10 @@
 // pay for grpc-go, the GCP auth stack, or their transitive tree.
 //
 // The module pins a published parsec version rather than replacing it with
-// the surrounding checkout, so `go get` resolves it for consumers. For local
-// development against an unreleased parsec, use a go workspace at the repo
-// root (`go work init . ./stores/gcpsecretmanager`) — consumers ignore it.
+// the surrounding checkout, so `go get` resolves it for consumers. The
+// go.work at the repo root overrides that pin with the working tree for
+// local development and CI; consumers ignore it. CI additionally builds
+// this module with GOWORK=off, so the pin itself stays verified.
 module github.com/frankbardon/parsec/stores/gcpsecretmanager
 
 go 1.26.1
