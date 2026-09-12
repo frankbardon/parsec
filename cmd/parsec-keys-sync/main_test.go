@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/frankbardon/parsec/internal/redisutil"
 )
 
 // redisAvailable probes localhost:6379. The sync test depends on two
@@ -93,21 +95,43 @@ func TestRun_ForwardsPubSubBetweenRegions(t *testing.T) {
 	}
 }
 
-// TestStripRedisScheme exercises the URL-normalizer in isolation —
-// pure function, fast unit case.
-func TestStripRedisScheme(t *testing.T) {
+// TestClientFromFlagAddress covers the --from / --to address handling.
+// This used to be a local stripRedisScheme helper that dropped the
+// scheme — and with it the TLS that rediss:// asks for. The daemon now
+// shares the parser with the library, so assert the two properties the
+// old helper got wrong: credentials survive, and rediss:// stays TLS.
+func TestClientFromFlagAddress(t *testing.T) {
 	cases := []struct {
-		in, want string
+		in       string
+		wantAddr string
+		wantPass string
+		wantTLS  bool
 	}{
-		{"127.0.0.1:6379", "127.0.0.1:6379"},
-		{"redis://127.0.0.1:6379", "127.0.0.1:6379"},
-		{"rediss://example.com:6380", "example.com:6380"},
-		{"", ""},
+		{in: "127.0.0.1:6379", wantAddr: "127.0.0.1:6379"},
+		{in: "redis://127.0.0.1:6379", wantAddr: "127.0.0.1:6379"},
+		{in: "rediss://example.com:6380", wantAddr: "example.com:6380", wantTLS: true},
+		{in: "redis://user:pw@example.com:6379", wantAddr: "example.com:6379", wantPass: "pw"},
 	}
 	for _, tc := range cases {
-		if got := stripRedisScheme(tc.in); got != tc.want {
-			t.Errorf("stripRedisScheme(%q) = %q, want %q", tc.in, got, tc.want)
+		c, err := redisutil.NewClient(tc.in, redisutil.Auth{})
+		if err != nil {
+			t.Errorf("NewClient(%q): %v", tc.in, err)
+			continue
 		}
+		opts := c.Options()
+		if opts.Addr != tc.wantAddr {
+			t.Errorf("NewClient(%q).Addr = %q, want %q", tc.in, opts.Addr, tc.wantAddr)
+		}
+		if opts.Password != tc.wantPass {
+			t.Errorf("NewClient(%q).Password = %q, want %q", tc.in, opts.Password, tc.wantPass)
+		}
+		if gotTLS := opts.TLSConfig != nil; gotTLS != tc.wantTLS {
+			t.Errorf("NewClient(%q) TLS = %v, want %v", tc.in, gotTLS, tc.wantTLS)
+		}
+		_ = c.Close()
+	}
+	if _, err := redisutil.NewClient("", redisutil.Auth{}); err == nil {
+		t.Error("NewClient(\"\") = nil error, want rejection")
 	}
 }
 

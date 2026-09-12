@@ -2,7 +2,7 @@
 // that mirrors Parsec keyring rotation events from one Redis (the
 // source region) to N target Redis instances (the peer regions).
 //
-// Why this exists
+// # Why this exists
 //
 // Each region's KeyRingStore
 // publishes a version-number payload to <prefix>:keyring:events when
@@ -15,7 +15,7 @@
 // rotation events so a key retired in us-east is taken out of
 // circulation in eu-west within a second.
 //
-// Deployment
+// # Deployment
 //
 // Run one process per *source* region. Pass --from for the source
 // Redis URL and one --to per target. The daemon is stateless and
@@ -37,6 +37,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/frankbardon/parsec/internal/redisutil"
 )
 
 // stringSliceFlag collects repeated --to values into a slice.
@@ -71,11 +73,17 @@ func main() {
 		fail(logger, "--to is required (repeat for multiple targets)")
 	}
 
-	srcClient := redis.NewClient(&redis.Options{Addr: stripRedisScheme(*from)})
+	srcClient, err := redisutil.NewClient(*from, redisutil.Auth{})
+	if err != nil {
+		fail(logger, fmt.Sprintf("--from: %v", err))
+	}
 	defer srcClient.Close()
 	targets := make([]*targetClient, 0, len(toFlag))
 	for _, t := range toFlag {
-		c := redis.NewClient(&redis.Options{Addr: stripRedisScheme(t)})
+		c, err := redisutil.NewClient(t, redisutil.Auth{})
+		if err != nil {
+			fail(logger, fmt.Sprintf("--to %s: %v", t, err))
+		}
 		targets = append(targets, &targetClient{URL: t, Client: c})
 	}
 	defer func() {
@@ -193,15 +201,4 @@ func forward(ctx context.Context, logger *slog.Logger, targets []*targetClient, 
 		}(t)
 	}
 	wg.Wait()
-}
-
-// stripRedisScheme normalizes "redis://host:port" to "host:port" so the
-// go-redis Options.Addr field is happy. Anything else is returned as-is.
-func stripRedisScheme(s string) string {
-	for _, p := range []string{"redis://", "rediss://"} {
-		if strings.HasPrefix(s, p) {
-			return strings.TrimPrefix(s, p)
-		}
-	}
-	return s
 }

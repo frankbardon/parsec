@@ -22,6 +22,7 @@ package parsec
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
@@ -41,6 +42,7 @@ import (
 	"github.com/frankbardon/parsec/channels"
 	perr "github.com/frankbardon/parsec/errors"
 	"github.com/frankbardon/parsec/internal/metrics"
+	"github.com/frankbardon/parsec/internal/redisutil"
 	"github.com/frankbardon/parsec/internal/tracing"
 	"github.com/frankbardon/parsec/ratelimit"
 	"github.com/frankbardon/parsec/sinks"
@@ -75,10 +77,30 @@ type Options struct {
 	RedisClient redis.UniversalClient
 
 	// RedisAddr is a convenience: when set and RedisClient is nil,
-	// parsec.New constructs a default go-redis client. Address syntax
-	// accepts the same forms as centrifuge.RedisShardConfig.Address
-	// (host:port, redis://..., redis+sentinel://..., etc.).
+	// parsec.New constructs a go-redis client from it. Accepted forms:
+	//
+	//	host:port
+	//	redis://[[user][:password]@]host:port[/db][?opt=val]
+	//	rediss://...  (TLS)
+	//	tcp://...     (alias for redis://)
+	//	unix:///path/to/socket
+	//
+	// Sentinel and cluster URLs are rejected — centrifuge's broker
+	// understands them but the shared client cannot be built from one, so
+	// pass a pre-built RedisClient instead. A malformed address fails
+	// parsec.New rather than surfacing as a dial error on first command.
 	RedisAddr string
+
+	// RedisAuth carries credentials and TLS for the client built from
+	// RedisAddr. Set fields override anything encoded in the address, so
+	// a password held in a secret file can override one in the URL. Unused
+	// when RedisClient is supplied directly.
+	RedisAuth RedisAuth
+
+	// RedisPingTimeout bounds the boot-time reachability check performed
+	// when Redis is configured. Zero means the 5s default; a negative
+	// value skips the check for embedders that start before Redis is up.
+	RedisPingTimeout time.Duration
 
 	// RedisShards configures the centrifuge Redis broker. When set, the
 	// broker switches from in-memory to Redis-backed. If empty and
@@ -303,9 +325,9 @@ type Parsec struct {
 	tracer         trace.Tracer
 	tracerShutdown tracing.ShutdownFunc
 
-	dlq         sinks.DLQ
-	dlqBackend  string // "memory" | "redis"
-	wrappedReg  *sinks.Registry
+	dlq        sinks.DLQ
+	dlqBackend string // "memory" | "redis"
+	wrappedReg *sinks.Registry
 
 	limiter    ratelimit.Limiter
 	rateLimits ratelimit.RateLimits
@@ -677,7 +699,16 @@ func wrapSinks(in *sinks.Registry, cfg sinks.RetryConfig, perSink map[string]sin
 // Also threads RedisShards into BrokerOptions.
 func normalizeRedisOptions(opts *Options) error {
 	if opts.RedisClient == nil && opts.RedisAddr != "" {
-		opts.RedisClient = redis.NewClient(&redis.Options{Addr: opts.RedisAddr})
+		client, err := redisutil.NewClient(opts.RedisAddr, redisutil.Auth{
+			Username: opts.RedisAuth.Username,
+			Password: opts.RedisAuth.Password,
+			DB:       opts.RedisAuth.DB,
+			TLS:      opts.RedisAuth.TLSConfig,
+		})
+		if err != nil {
+			return perr.Wrap(perr.InvalidArgument, "redis address", err)
+		}
+		opts.RedisClient = client
 	}
 	if opts.RedisClient != nil && len(opts.RedisShards) == 0 && opts.RedisAddr != "" {
 		node, err := centrifuge.New(centrifuge.Config{})
@@ -1665,3 +1696,16 @@ type (
 )
 
 var _ = errors.New // keep stdlib errors imported for any future surface
+
+// RedisAuth holds the credential and transport overrides applied to the
+// client parsec builds from Options.RedisAddr. Every field is optional.
+type RedisAuth struct {
+	Username string
+	Password string
+	// DB selects the logical database. Nil leaves whatever the address
+	// encoded; a pointer to 0 forces database 0.
+	DB *int
+	// TLSConfig forces TLS with this config — needed for a private CA. A
+	// rediss:// address already gets a default config without it.
+	TLSConfig *tls.Config
+}
