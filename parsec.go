@@ -28,6 +28,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/centrifugal/centrifuge"
@@ -99,7 +100,10 @@ type Options struct {
 
 	// RedisPingTimeout bounds the boot-time reachability check performed
 	// when Redis is configured. Zero means the 5s default; a negative
-	// value skips the check for embedders that start before Redis is up.
+	// value skips parsec's own check for embedders that start before Redis
+	// is up. Note that the centrifuge broker shard built from RedisAddr
+	// connects eagerly regardless, so a boot that must tolerate an absent
+	// Redis also needs an explicit RedisShards (or a non-Redis broker).
 	RedisPingTimeout time.Duration
 
 	// RedisShards configures the centrifuge Redis broker. When set, the
@@ -358,9 +362,20 @@ func New(opts Options) (*Parsec, error) {
 		logger = slog.Default()
 	}
 
+	// Redis must be normalized BEFORE buildKeyRing: the keyring store is
+	// selected on opts.RedisClient, so leaving this until later silently
+	// downgraded every RedisAddr-configured deployment to a file-backed
+	// (or ephemeral) ring while the manifest still claimed "redis".
+	if err := normalizeRedisOptions(&opts, logger); err != nil {
+		return nil, err
+	}
+
 	ring, keyringStore, keyringPath, err := buildKeyRing(opts, logger)
 	if err != nil {
 		return nil, err
+	}
+	if _, ok := keyringStore.(*auth.RedisKeyRingStore); ok {
+		warnRedisDurability(opts, logger)
 	}
 	signer, err := auth.NewSigner(ring)
 	if err != nil {
@@ -402,9 +417,6 @@ func New(opts Options) (*Parsec, error) {
 		issuer.MaxRefreshTTL = opts.MaxRefreshTokenTTL
 	}
 
-	if err := normalizeRedisOptions(&opts); err != nil {
-		return nil, err
-	}
 	// Compile per-channel rules before resolving the limiter so the
 	// rules end up on the RateLimits we hand back to callers.
 	rules, err := ratelimit.CompileChannelRules(opts.PerChannelPublishLimits)
@@ -697,7 +709,7 @@ func wrapSinks(in *sinks.Registry, cfg sinks.RetryConfig, perSink map[string]sin
 // builds the client; if RedisShards is empty and Redis is configured,
 // it builds a single centrifuge.RedisShard from the same address.
 // Also threads RedisShards into BrokerOptions.
-func normalizeRedisOptions(opts *Options) error {
+func normalizeRedisOptions(opts *Options, logger *slog.Logger) error {
 	if opts.RedisClient == nil && opts.RedisAddr != "" {
 		client, err := redisutil.NewClient(opts.RedisAddr, redisutil.Auth{
 			Username: opts.RedisAuth.Username,
@@ -710,12 +722,30 @@ func normalizeRedisOptions(opts *Options) error {
 		}
 		opts.RedisClient = client
 	}
+	// Ping before the shard is built: centrifuge connects eagerly, so
+	// without this an unreachable Redis surfaces as a shard-construction
+	// error that says nothing about what the operator should fix.
+	if err := pingRedis(*opts, logger); err != nil {
+		return err
+	}
 	if opts.RedisClient != nil && len(opts.RedisShards) == 0 && opts.RedisAddr != "" {
 		node, err := centrifuge.New(centrifuge.Config{})
 		if err != nil {
 			return perr.Wrap(perr.Internal, "centrifuge.New for shard probe", err)
 		}
-		shard, err := centrifuge.NewRedisShard(node, centrifuge.RedisShardConfig{Address: opts.RedisAddr})
+		// The broker parses the address itself, but credentials supplied
+		// out-of-band via RedisAuth have to be handed over explicitly or
+		// the broker authenticates as nobody.
+		shardCfg := centrifuge.RedisShardConfig{
+			Address:   opts.RedisAddr,
+			User:      opts.RedisAuth.Username,
+			Password:  opts.RedisAuth.Password,
+			TLSConfig: opts.RedisAuth.TLSConfig,
+		}
+		if opts.RedisAuth.DB != nil {
+			shardCfg.DB = *opts.RedisAuth.DB
+		}
+		shard, err := centrifuge.NewRedisShard(node, shardCfg)
 		if err != nil {
 			return perr.Wrap(perr.Internal, "build centrifuge redis shard", err)
 		}
@@ -1041,6 +1071,81 @@ func buildManager(opts Options, logger *slog.Logger) *channels.Manager {
 	return m
 }
 
+// defaultRedisPingTimeout bounds the boot-time reachability check.
+const defaultRedisPingTimeout = 5 * time.Second
+
+// pingRedis verifies the configured Redis is actually reachable before
+// any subsystem is built on top of it. go-redis dials lazily, so without
+// this a misconfigured address surfaces much later as a dial error on
+// whichever command happens to run first — or, when the keyring is the
+// only Redis consumer that fails loudly, not at all.
+//
+// Options.RedisPingTimeout < 0 skips the check for embedders that start
+// before their Redis is up.
+func pingRedis(opts Options, logger *slog.Logger) error {
+	if opts.RedisClient == nil || opts.RedisPingTimeout < 0 {
+		return nil
+	}
+	timeout := opts.RedisPingTimeout
+	if timeout == 0 {
+		timeout = defaultRedisPingTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := opts.RedisClient.Ping(ctx).Err(); err != nil {
+		where := opts.RedisAddr
+		if where == "" {
+			where = "the supplied RedisClient"
+		}
+		return perr.Wrap(perr.Internal, "redis unreachable at "+where, err)
+	}
+	logger.Debug("parsec: redis reachable", "addr", opts.RedisAddr)
+	return nil
+}
+
+// warnRedisDurability checks the settings that decide whether a
+// Redis-backed keyring survives. When Redis is the keyring store it holds
+// the ONLY copy of the signing keys, and an empty keyspace is
+// indistinguishable from a first boot: Ensure bootstraps a brand-new ring
+// and every outstanding token in the fleet dies.
+//
+// Advisory only. Managed providers routinely block CONFIG GET, so an
+// unreadable setting is skipped rather than guessed at.
+func warnRedisDurability(opts Options, logger *slog.Logger) {
+	if opts.RedisClient == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), defaultRedisPingTimeout)
+	defer cancel()
+
+	get := func(param string) (string, bool) {
+		res, err := opts.RedisClient.ConfigGet(ctx, param).Result()
+		if err != nil {
+			return "", false
+		}
+		v, ok := res[param]
+		return v, ok
+	}
+
+	aof, aofOK := get("appendonly")
+	save, saveOK := get("save")
+	// AOF off AND no RDB save points means a restart loses the ring
+	// outright. AOF off with save points is lossy but bounded, so it is
+	// only worth a warning when we can see both.
+	if aofOK && !strings.EqualFold(aof, "yes") && saveOK && strings.TrimSpace(save) == "" {
+		logger.Warn("parsec: redis has no persistence configured (appendonly=no, no save points) "+
+			"but holds the only copy of the keyring; a redis restart invalidates every issued token",
+			"remedy", "enable AOF: redis-server --appendonly yes")
+	}
+
+	if policy, ok := get("maxmemory-policy"); ok && strings.HasPrefix(policy, "allkeys") {
+		logger.Warn("parsec: redis maxmemory-policy evicts any key, including the keyring, "+
+			"which would silently mint a fresh ring and invalidate every issued token",
+			"maxmemory_policy", policy,
+			"remedy", "set maxmemory-policy to noeviction or a volatile-* policy")
+	}
+}
+
 // buildKeyRing resolves the KeyRing precedence: explicit > Redis >
 // StateDir > ephemeral. Returns the chosen ring, the keyring store
 // (for reload), and the on-disk path (empty when no file persistence).
@@ -1066,6 +1171,15 @@ func buildKeyRing(opts Options, logger *slog.Logger) (*auth.KeyRing, auth.KeyRin
 		} else {
 			logger.Info("parsec: loaded keyring from redis",
 				"prefix", prefix, "active_key_id", ring.ActiveID())
+		}
+		if opts.StateDir != "" {
+			// Redis wins the precedence, so keyring.json is neither read
+			// nor written. Say so: a StateDir in the config reads like a
+			// durable backup, and it is not one.
+			logger.Warn("parsec: StateDir is set but redis holds the keyring; "+
+				"keyring.json is not read or written and redis is the only copy of the signing keys",
+				"state_dir", opts.StateDir,
+				"remedy", "back up with: parsec keys export --redis-addr <addr>")
 		}
 		return ring, store, "", nil
 	}
